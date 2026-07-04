@@ -1,383 +1,240 @@
-# pve-cert — Proxmox HTTPS, trusted on every client. One command. No domain. No internet. No annual renewal.
+![anycert](pic/banner.svg)
+
+# anycert — Self-Hosted HTTPS Certificate Manager, Trusted by Every Client
+
+Permanently eliminate browser certificate warnings for your self-hosted servers. Supports Proxmox VE, OpenMediaVault, Unraid, local LLM servers, Nginx, and any internal TLS/HTTPS service.
+
+One command on the server, one command on each client. Get a green lock in your browser, valid for 10 years, fully offline, and requiring no public domains or DNS records.
 
 **English** | [繁體中文](README_tw.md)
 
-Your Proxmox browser warning, permanently gone.
+---
 
-One command on the server, one command on each client —
-your browser shows a padlock, stays that way for 10 years,
-and works completely offline with no public domain required.
+## File Description
+
+### Server-side (Generator & Installer)
+| File | Platform | Usage |
+|------|----------|-------|
+| `anycert.sh` | Linux (including WSL) / macOS Server | Generates Root CA + Server cert, supports PVE, Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
+| `anycert.bat` | Windows Server | Generates Root CA + Server cert, supports Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
+
+### Client-side (Downloader & Truster)
+| File | Platform | Usage |
+|------|----------|-------|
+| `anycert-windows.bat` | Windows Client | Downloads CA cert, updates hosts, imports to Windows Trust Store |
+| `anycert-linux.sh` | Linux Client (Ubuntu/Debian) | Downloads CA cert, updates hosts, imports to system and browser (Chrome/Firefox) Trust Stores |
+| `anycert-macos.sh` | macOS Client | Downloads CA cert, updates hosts, imports to macOS Keychain |
 
 ---
 
-Every fresh Proxmox VE installation greets you with this:
+## Why anycert? (Comparison Table)
 
-![](pic/1.png)
-![](pic/2.png)
+How does `anycert` compare with other internal TLS/HTTPS solutions?
 
----
-
-## Files
-
-| File | Platform | Purpose |
-|------|----------|---------|
-| `pve-cert.sh` | Proxmox VE (Node/Cluster) | Generate Root CA + node cert, install into PVE |
-| `pve-cert-windows.bat` | Windows Client | Download CA cert, update hosts, import to Windows trust store |
-| `pve-cert-linux.sh` | Linux Client (Ubuntu/Debian) | Download CA cert, update hosts, import to system + browser trust stores |
-| `pve-cert-macos.sh` | macOS Client | Download CA cert, update hosts, import to macOS Keychain |
-
-After running `pve-cert.sh` on the PVE server and the appropriate client script on each machine, the warning is gone:
-
-![](pic/s1.png)
-![](pic/s2.png)
-
----
-
-## Compatibility
-
-**Proxmox VE (Server)**
-- PVE 7.x or later
-
-**Client OS**
-
-| OS | Version |
-|----|---------|
-| Windows | 10, 11 (x86 / ARM) |
-| Linux | Ubuntu 20.04+, Debian 11+ (x86 / ARM) |
-| macOS | 12 Monterey+ (Intel / Apple Silicon) |
-
-**Browser**
-
-| Browser | Notes |
-|---------|-------|
-| Chrome / Chromium | ✅ Auto-imported on Linux; follows system trust on Windows / macOS |
-| Firefox | ✅ Auto-imported on Linux (incl. snap); follows system trust on Windows / macOS |
-| Edge | ✅ Follows Windows / macOS system trust store |
-| Safari | ✅ Follows macOS Keychain |
-
----
-
-## Why Use This Script?
-
-There are several ways to handle TLS certificates for a Proxmox VE Web UI. The table below compares the most common approaches.
-
-### Certificate Method Comparison
-
-| | **PVE Default Self-Signed** | **ACME / Let's Encrypt (HTTP-01)** | **Let's Encrypt + Cloudflare (DNS-01)** | **Commercial Wildcard Cert** | **This Script — Self-Signed CA + Client Trust** |
+| Feature | **Default Self-Signed** | **Let's Encrypt (DNS-01 / Cloudflare)** | **Tunnels (Cloudflared / ngrok)** | **Mesh VPN (Tailscale HTTPS)** | **anycert (This Script)** |
 |---|---|---|---|---|---|
-| **Browser warning** | ❌ Warning by default (can be suppressed by manually importing PVE Root CA on each client, but must be re-imported every year after renewal) | ✅ None | ✅ None | ✅ None | ✅ None (after client setup) |
-| **Public domain required** | ✅ No | ❌ Yes | ❌ Yes | ❌ Yes | ✅ No |
-| **Internet access required** | ✅ No | ❌ Yes (port 80/443) | ❌ Yes (DNS API) | ❌ Yes | ✅ No — fully air-gapped |
-| **Expiry / renewal** | 1 year, auto-renew | 90 days, auto-renew | 90 days, auto-renew | 1–2 years, manual | Configurable (default 10 yr) |
-| **Client re-setup on renewal** | ❌ Yes — re-import on every client | ✅ None | ✅ None | ✅ None | ✅ None — Root CA stays trusted |
-| **Setup complexity** | None (warning persists by default) | Medium | Medium–High | Low–Medium | Low |
-| **Extra services needed** | None | None | Cloudflare account + API token | None | None |
-| **Hostname exposed publicly** | ✅ No | ❌ Yes (CT logs) | ❌ Yes (CT logs) | ❌ Yes | ✅ No |
-| **Works on isolated LAN** | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Yes |
-| **Multi-client trust** | Manual per client, repeated each renewal | Automatic | Automatic | Automatic | One-time per client |
-| **Cost** | Free | Free | Free | $100–300/yr | Free |
-| **Access by FQDN** | ✅ Yes (but browser warning still shown unless PVE Root CA is manually imported) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| **Access by IP** | ✅ Yes (but browser warning still shown) | ❌ No | ❌ No | ❌ No | ✅ Yes (SAN includes IP) |
-| **PVE Web UI cert management** | ✅ Yes (server-side only) | ✅ Yes (server-side only) | ✅ Yes (server-side only) | ❌ Manual | ❌ Manual (this script) |
+| **Browser Lock 🔒** | ❌ Warnings (Must re-trust every year) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (After client setup) |
+| **Needs Public Domain** | ✅ No | ❌ Yes | ❌ Yes | ✅ No | ✅ No |
+| **Needs Internet** | ✅ No | ❌ Yes | ❌ Must be online | ❌ Must be online | ✅ No — Works 100% offline |
+| **Exposes Hostname** | ✅ No | ❌ Yes (CT logs) | ❌ Yes (CT logs) | ✅ No | ✅ No |
+| **Isolated LAN Support** | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Yes |
+| **Client Reconfig on Renew**| ❌ Yes (Every year) | ✅ No | ✅ No | ✅ No | ✅ No — Root CA stays trusted |
+| **LAN Data Stays Local** | ✅ Yes | ✅ Yes | ❌ No (Via edge nodes) | ❌ No (Often routes via DERPs/relays) | ✅ Yes — Full LAN speeds |
+| **Multi-Client Setup** | Manual trust on every client per renew | Automatic | Automatic | Requires client agent on all machines | Run client script once per client |
+| **Cost** | Free | Free | Free / Paid plans | Free / Paid plans | Free |
+| **FQDN Access** | ✅ Yes (With warning) | ✅ Yes | ✅ Yes | ✅ Yes (Limit `*.ts.net`) | ✅ Yes |
+| **IP Access** | ✅ Yes (With warning) | ❌ No | ❌ No | ❌ No | ✅ Yes (SAN contains IP) |
+| **Complexity** | None | High | Medium | Medium | Low |
+
+### Best Use Cases
+- **Let's Encrypt + Cloudflare**: Best for homelabs with public domains where you don't mind exposing hostnames to public Certificate Transparency logs.
+- **Cloudflared / ngrok**: Good for exposing internal services to the public internet, but poses security risks and fails in offline/LAN environments.
+- **Tailscale HTTPS**: Great if your entire fleet is already on Tailscale, but requires an active internet connection to update certificates and forces you to use `*.ts.net` domains.
+- **anycert**: Ideal for **fully offline, air-gapped, or secure internal LANs** where no public exposure is wanted, data privacy is critical, and direct IP access is preferred.
 
 ---
 
-### When to Use Each Method
+## 🔒 Why Local HTTPS Matters?
 
-**PVE Default Self-Signed**
+Using HTTPS on a local area network (LAN) provides critical benefits beyond simply **eliminating browser warning screens**:
 
-The out-of-the-box certificate. Fast to get started, but shows a browser warning by default. The warning can be suppressed by manually importing the cert on each client, but requires re-import every year when the cert renews. Acceptable for a quick lab test, not for daily use.
+### 1. Enabling Modern Browser APIs (Secure Contexts Enforcement)
+Modern browsers (like Chrome, Safari, Edge) enforce strict security policies that disable many powerful web APIs unless the page is loaded in a **"Secure Context"** (i.e., over `https://` or on `http://localhost` **only when accessed locally on the server machine**).
 
-**ACME / Let's Encrypt (HTTP-01)**
+If you connect from other devices on the LAN (like your phone, tablet, or another laptop) using plain `http://` with a local IP or custom FQDN, the browser will flag the connection as insecure and **forcefully disable**:
+- **Clipboard Operations (Clipboard API)**: This is a major pain point! In local LLM chat applications (e.g., Open WebUI, LLMChat), clicking the **"Copy Code"** button on code blocks will **completely fail** under HTTP cross-device connections.
+- **Microphone & Camera Access**: Speech-to-Text inputs and AI voice chat features **cannot access your microphone** if the URL is not HTTPS.
+- **PWA Installation (Progressive Web Apps)**: You cannot install local web apps to your desktop or mobile home screen, nor can you use offline features (Service Workers).
+- **Hardware Integration**: Gamepad API (game controllers), WebBluetooth, WebUSB, and MIDI keyboard integrations will be disabled.
+- **Credential APIs & Passwordless Login (Web Crypto / Passkeys)**: Generating or registering passkeys requires HTTPS.
 
-Built into the Proxmox Web UI under Datacenter → pve → Certificates. Requires a publicly reachable domain and open ports 80/443. Not suitable for internal-only servers behind NAT or on air-gapped networks.
-
-**Let's Encrypt + Cloudflare DNS-01**
-
-Validation happens via DNS API, so port 80/443 does not need to be exposed. Requires a public domain managed through Cloudflare (or another supported DNS provider) and an API token. The hostname appears in public Certificate Transparency logs. Suitable for any environment — homelab or enterprise — that has a public domain managed through a supported DNS provider and is comfortable with hostnames appearing in CT logs.
-
-**Commercial Wildcard Certificate**
-
-Covers all subdomains of a public domain (`*.demo.local` is not valid — a real public TLD is required). High cost and typically manual renewal. Only worth it for production environments with existing public domain infrastructure.
-
-**This Script — Self-Signed CA + Client Trust**
-
-✅ Recommended for any internal infrastructure without a public domain
-
-Generates a private Root CA and a node certificate with proper SAN entries (DNS + IP), and installs it into PVE. Each client machine then runs the client script once to import the CA and gain trusted access — no public domain, no internet access, no port forwarding, no subscription required.
-
-Best suited for:
-- Any internal infrastructure with no public domain — homelab, SMB, or enterprise private cloud
-- Air-gapped or NAT-only networks
-- Environments where hostnames must not appear in public CT logs
-- Multiple PVE nodes each needing their own trusted cert
-- Users who want a one-command setup on both server and client
-
-The main trade-off is that every new client machine needs to run the client script once to import the CA. Unlike importing the PVE default cert directly, the Root CA does not change on renewal — so clients never need to re-import.
+### 2. Protecting Credentials and Tokens from Local Sniffing
+In shared network environments (such as offices, schools, co-living spaces, or public Wi-Fi), unencrypted HTTP traffic can be easily sniffed by anyone on the same network using tools like Wireshark. HTTPS encrypts all communication, preventing:
+- Theft of login credentials to your self-hosted services.
+- Sniffing of sensitive AI API Keys (such as OpenAI/Anthropic tokens) transmitted to local LLMs.
+- Local eavesdropping on private LLM chats and database payloads.
 
 ---
 
-## How It Works
+## 💡 Key Mechanism: 10-Year CA vs. 825-Day Server Cert
 
-```
-┌─────────────────────────────────────────────────┐
-│  Proxmox VE Server                              │
-│                                                 │
-│  pve-cert.sh                                    │
-│  ├── Auto-detect IP / FQDN                      │
-│  ├── Generate Root CA  (pve-local-ca.crt/.key)  │
-│  ├── Generate node cert signed by Root CA       │
-│  ├── Install to /etc/pve/local/                 │
-│  └── Restart pveproxy / pvedaemon               │
-└────────────────┬────────────────────────────────┘
-                 │  scp  pve-local-ca.crt
-                 ▼
-┌─────────────────────────────────────────────────┐
-│  Client Machine  ← repeat for each client       │
-│                                                 │
-│  pve-cert-windows.bat  /  pve-cert-linux.sh     │
-│  pve-cert-macos.sh                              │
-│  ├── Download CA cert via scp                   │
-│  ├── Auto-detect FQDN via ssh hostname -f       │
-│  ├── Add entry to hosts file                    │
-│  └── Import CA cert to system trust store       │
-└─────────────────────────────────────────────────┘
-                 │
-                 ▼
-     https://pve.demo.local:8006  🔒
-```
+**Why is the Root CA valid for 10 years (3650 days), while the server cert is only 825 days?**
+Modern operating systems and browsers (like Apple iOS/macOS Safari and Google Chrome) enforce a strict security policy: any leaf SSL/TLS server certificate signed by a private CA must have a maximum validity of **825 days** (approx. 2.2 years). If it exceeds 825 days, the browser will block the connection with an invalid certificate warning.
+
+To bypass this restriction while providing a seamless user experience, `anycert` uses a dual-layer setup:
+1. **Root CA (10 years)**: Installed and trusted on the client device. It remains unchanged.
+2. **Server Certificate (825 days)**: Installed on the server.
+Since the Root CA trusted by your clients remains unchanged, **when the server certificate expires, you only run the script on the server to regenerate it. The clients will automatically trust it without any re-importing or reconfiguration.** This achieves the "configure once, trusted forever" convenience.
 
 ---
 
-## Requirements
+## Installation Steps
 
-### Proxmox VE Server
-- Run as `root`
-- `openssl` installed (included in PVE by default)
+### Step 1 — On the Server (Generate Certs)
 
-### Windows Client
-- Run as **Administrator**
-- OpenSSH Client enabled (Windows 10 build 1809+)
-  - Settings → Apps → Optional Features → OpenSSH Client
-- `pve-cert.sh` must have been run on the PVE server first
-
-### Linux Client (Ubuntu / Debian)
-- Run with `sudo`
-- `openssh-client` and `openssl` installed
-  - `sudo apt install openssh-client openssl`
-- `ca-certificates` package installed (provides `update-ca-certificates`)
-  - `sudo apt install ca-certificates`
-- `libnss3-tools` installed (provides `certutil`, for Firefox / Chrome NSS store import)
-  - `sudo apt install libnss3-tools`
-  - The script will install this automatically if missing
-- `pve-cert.sh` must have been run on the PVE server first
-
-### macOS Client
-- Run with `sudo`
-- `ssh`, `scp`, `openssl`, and `security` are all included with macOS — no extra install needed
-- `pve-cert.sh` must have been run on the PVE server first
-
----
-
-## Download
-
-Clone this repository on the PVE server and on each client machine:
-
-**On Proxmox VE (SSH):**
+#### Linux (including WSL) / macOS Server:
+Clone this repo and run `anycert.sh`:
 ```bash
-git clone https://github.com/anomixer/pve-cert.git
-cd pve-cert
+git clone https://github.com/anomixer/anycert.git
+cd anycert
+sudo bash anycert.sh
 ```
-
-**On Windows (Command Prompt or PowerShell):**
-```cmd
-git clone https://github.com/anomixer/pve-cert.git
-cd pve-cert
-```
-
-**On Linux / macOS (Terminal):**
-```bash
-git clone https://github.com/anomixer/pve-cert.git
-cd pve-cert
-```
-
-> Or [download the ZIP directly](https://github.com/anomixer/pve-cert/archive/refs/heads/main.zip) and extract it.
-
----
-
-## Installation
-
-### Step 1 — Run on the Proxmox VE server
-
-```bash
-sudo bash pve-cert.sh
-```
-
 The script will:
-1. Auto-detect PVE IP and FQDN (`hostname -f`)
-2. Confirm the details with you before proceeding
-3. Generate `Proxmox VE Local Root CA` and a node certificate with SAN entries for both the DNS name and IP address
-4. Back up existing certs to `/etc/pve/local/pveproxy-ssl.pem.bak.<timestamp>`
-5. Install the new certificate and restart `pveproxy` / `pvedaemon`
-6. Print the full certificate details and all output file locations
+1. Auto-detect your IP, hostname, and FQDN.
+2. Let you choose a deployment profile:
+   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port+10000` to `HTTP Port`) with WebSocket support out of the box (e.g. for Open WebUI).
+   - **Proxmox VE (PVE)**: Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
+   - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (e.g. for pre-configured setups).
+   - **Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
 
-**Output files on PVE:**
-
-| File | Description |
-|------|-------------|
-| `/root/pve-local-ca.crt` | Root CA certificate (downloaded by client scripts) |
-| `/root/pve-local-ca.key` | Root CA private key — keep on server, do not share |
-| `/root/pve-node.crt` | Node certificate |
-| `/root/pve-node.key` | Node private key |
-| `/etc/pve/local/pveproxy-ssl.pem` | Active certificate used by PVE Web UI |
-| `/etc/pve/local/pveproxy-ssl.key` | Active private key used by PVE Web UI |
-
-**Multiple PVE servers:** if you have more than one Proxmox VE server, run `pve-cert.sh` on each server individually. Every server generates its own independent Root CA and node certificate.
+#### Windows Server:
+Run Command Prompt (cmd) as **Administrator** and execute:
+```cmd
+anycert.bat
+```
+The script will search for OpenSSL (e.g. from Git for Windows), generate the certificates, and allow you to deploy them using the Nginx automatic proxy (automatic download & setup) or to custom paths (e.g. IIS).
 
 ---
 
-### Step 2 — Run on each client machine
+### Step 2 — On Each Client (Trust the CA)
 
-Run the script for your OS:
+Run the script matching your client operating system:
 
-**Windows** — right-click `pve-cert-windows.bat` → Run as administrator
-```bat
-pve-cert-windows.bat
+#### Windows Client:
+Right-click `anycert-windows.bat` → **Run as Administrator**.
+```cmd
+anycert-windows.bat
 ```
 
-**Linux (Ubuntu / Debian)**
+#### Linux Client (Ubuntu / Debian):
 ```bash
-sudo bash pve-cert-linux.sh
+sudo bash anycert-linux.sh
 ```
 
-**macOS**
+#### macOS Client:
 ```bash
-sudo bash pve-cert-macos.sh
+sudo bash anycert-macos.sh
 ```
 
-All three scripts follow the same steps:
-1. Ask for the PVE IP address and SSH username
-2. Download `pve-local-ca.crt` from PVE via `scp` (prompts for SSH password once)
-3. Auto-detect the PVE FQDN via `ssh hostname -f`
-4. Add an entry to the system hosts file
-5. Import the CA cert into the OS trust store
-6. Optionally open the PVE Web UI in the default browser
-
-**Linux additionally** imports the CA cert into the NSS store used by Chrome, Chromium, and Firefox (including snap-packaged Firefox on Ubuntu 21.10+), so no manual browser steps are needed.
-
-**Multiple client machines:** run the appropriate script independently on every machine that needs access to the PVE Web UI without a certificate warning.
-
-**Multiple PVE nodes:** run the client script once per PVE node on the same machine. The script accumulates site entries without overwriting existing ones — each site is tracked by IP, FQDN, and cert fingerprint.
+The client scripts will:
+1. Ask for the Server IP and SSH username.
+2. Automatically download the Root CA certificate via `scp`.
+3. Detect the server's FQDN and add a mapping to the local `hosts` file.
+4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles).
 
 ---
 
-### Step 3 — Open the Web UI
+### Step 3 — Secure HTTPS Connection 🔒
+Restart your browser and access your server securely via FQDN or IP:
+- `https://<your-server-fqdn>:<port>`
+- `https://<your-server-ip>:<port>`
 
-Restart your browser, then navigate to either the FQDN:
+---
 
+## Deployment Examples (Custom Paths)
+
+### 1. Nginx Automated Reverse Proxy (Recommended for multi-service environments)
+If you run multiple HTTP services concurrently (e.g., Ollama on 11434, Portainer on 9443, Node.js LLMChat on 3000, Python on 6000), choose **Option 2 (Auto-Setup Nginx SSL Proxy)**:
+- The script automatically scans active listening TCP ports on the server and lists them.
+- Enter the ports you wish to wrap in SSL. Nginx will automatically map them to `HTTPS Port + 10000`:
+  - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (LLMChat)
+  - `https://mysrv:16000` ➔ proxies to local `http://localhost:6000` (Python)
+  - `https://mysrv:19443` ➔ proxies to local `http://localhost:9443` (Portainer)
+  - `https://mysrv:21434` ➔ proxies to local `http://localhost:11434` (Ollama)
+- **No changes to Docker containers or original app configurations are needed**, even if the services lack native HTTPS support (e.g. you can map Portainer container's HTTP port to host port 9443). Nginx wraps them in TLS seamlessly on the host.
+
+### 2. OpenMediaVault (OMV)
+OMV uses Nginx to serve its Web UI. You can deploy certificates directly (Option 1):
+- Cert target path: `/etc/ssl/certs/openmediavault-webgui.crt`
+- Key target path: `/etc/ssl/private/openmediavault-webgui.key`
+- Reload command: `systemctl restart nginx`
+
+### 3. Unraid
+Unraid stores its SSL certificate in the USB flash configuration (Option 1):
+- Cert target path: `/boot/config/ssl/certs/cert.pem`
+- Key target path: `/boot/config/ssl/certs/key.pem`
+- Reload command: `/etc/rc.d/rc.nginx reload`
+
+### 4. VMware ESXi
+ESXi hosts store their web console certificates in a fixed location. You can simply overwrite them (Option 1):
+- Cert target path: `/etc/vmware/ssl/rui.crt`
+- Key target path: `/etc/vmware/ssl/rui.key`
+- Reload command: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
+
+### 5. Nginx Manual Reverse Proxy (e.g., local LLM Server / Open WebUI)
+You can use Nginx manually as a reverse proxy to add HTTPS to local HTTP services like `http://localhost:3000` (Open WebUI).
+In your Nginx site config:
+```nginx
+server {
+    listen 443 ssl;
+    server_name openwebui.local;
+    ssl_certificate /etc/nginx/ssl/anycert.crt;
+    ssl_certificate_key /etc/nginx/ssl/anycert.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
 ```
-https://<your-pve-fqdn>:8006
-```
+In `anycert.sh` (Option 1), specify:
+- Cert target path: `/etc/nginx/ssl/anycert.crt`
+- Key target path: `/etc/nginx/ssl/anycert.key`
+- Reload command: `nginx -s reload`
 
-or directly by IP address:
+### 6. WSL (Windows Subsystem for Linux) Deployment
+If your services (like Nginx or Docker containers) are running inside WSL 2, because WSL 2 is a Linux environment, you should **run the Linux server script directly inside the WSL terminal** instead of running the `.bat` file on the Windows host:
+1. Open your WSL terminal (e.g., Ubuntu/Debian) and run:
+   ```bash
+   sudo bash anycert.sh
+   ```
+2. When `anycert.sh` prompts you to confirm network configurations:
+   - **If you only want to access the WSL service from the local Windows host**: Just accept the default WSL private IP address, and access it via `localhost` or the FQDN.
+   - **If you need to access the WSL service from other devices on the LAN**: Manually change the IP address to the **physical LAN IP of your Windows host**. This ensures the issued certificate binds to the physical IP. You will then need to configure port forwarding (e.g., via `netsh interface portproxy`) on the Windows host to forward traffic to WSL.
 
-```
-https://<your-pve-ipaddr>:8006
-```
-
-Both work without a certificate warning — the certificate SAN includes both the FQDN and the IP address. The browser should show a padlock 🔒. Using the FQDN is recommended for day-to-day use (see [Notes](#notes) for details).
+> [!NOTE]
+> **About Physical Network IP Detection on Windows**
+> When running `anycert.bat` on Windows Server, it automatically filters out virtual network interfaces such as Hyper-V Virtual Switch (`vEthernet`), WSL Virtual Switch, Tailscale, VMware, and VirtualBox network adapters. It will automatically detect and bind to the host's actual physical LAN IP address.
 
 ---
 
 ## Uninstall
 
-### PVE Server
-
+### Server-side
 ```bash
-sudo bash pve-cert.sh -u
+sudo bash anycert.sh -u
+# Or Windows Server
+anycert.bat -u
 ```
+Removes generated certificates and restores original configurations (including removing Nginx proxies).
 
-- Finds the most recent backup and restores it automatically
-- Restarts `pveproxy` / `pvedaemon`
-
-### Client Machine
-
-**Windows** — run as Administrator:
-```bat
-pve-cert-windows.bat -u
-```
-
-**Linux:**
+### Client-side
 ```bash
-sudo bash pve-cert-linux.sh -u
+sudo bash anycert-linux.sh -u
+# Or macOS Client
+sudo bash anycert-macos.sh -u
+# Or Windows Client
+anycert-windows.bat -u
 ```
-
-**macOS:**
-```bash
-sudo bash pve-cert-macos.sh -u
-```
-
-All three present a numbered list of registered sites:
-
-```
-  Registered PVE sites:
-  -----------------------------------
-    [1]  192.168.1.111  <>  pve1.demo.local
-    [2]  192.168.1.112  <>  pve2.demo.local
-    [0]  Remove ALL
-
-  Select [1-2, 0=all]:
-```
-
-For each selected site, the script will:
-- Remove the hosts entry
-- Remove the CA cert from the OS trust store (matched by fingerprint)
-- Remove the CA cert from browser NSS stores (Linux: Chrome/Chromium and Firefox including snap)
-- Delete the local cert file from the data directory
-
----
-
-## Notes
-
-### Client Script Comparison
-
-| | **Windows** | **Linux** | **macOS** |
-|---|---|---|---|
-| **Script** | `pve-cert-windows.bat` | `pve-cert-linux.sh` | `pve-cert-macos.sh` |
-| **Run as** | Administrator | `sudo` | `sudo` |
-| **Hosts file** | `C:\Windows\System32\drivers\etc\hosts` | `/etc/hosts` | `/etc/hosts` |
-| **Trust store** | Windows Root CA store (`certutil`) | System CA bundle (`update-ca-certificates` / `update-ca-trust`) + NSS store (Chrome/Firefox) | macOS Keychain (`security`) |
-| **Cert fingerprint** | SHA-1 thumbprint (PowerShell) | SHA-256 (openssl) | SHA-1 (openssl + Keychain) |
-| **Data directory** | `%ProgramData%\pve-cert\` | `~/.local/share/pve-cert/` | `~/Library/Application Support/pve-cert/` |
-| **Open browser** | `start` | `xdg-open` | `open` |
-| **Extra dependencies** | OpenSSH Client (built-in Win10+) | `openssh-client`, `openssl`, `ca-certificates`, `libnss3-tools` (auto-installed if missing) | None (all built-in) |
-
----
-
-### Why FQDN instead of IP address?
-
-Browsers validate TLS certificates using the **Subject Alternative Name (SAN)** field, not just the Common Name (CN). A SAN entry can be either a DNS name or an IP address, but the two are treated as completely separate identifiers.
-
-This script includes **both** in the certificate:
-
-```
-SAN: DNS:pve92.demo.local
-     IP:192.168.21.92
-```
-
-So `https://192.168.21.92:8006` **will** work without a warning. However, using the FQDN is strongly recommended because:
-
-- **IP addresses change.** If the PVE server is reassigned to a new IP, the cert SAN no longer matches and the warning returns. The FQDN stays stable as long as the `hosts` entry or DNS record is kept up to date.
-- **Browser behaviour.** Some browsers (notably older Chrome/Edge builds) do not honour IP SANs in private CA certificates and will show a warning regardless.
-- **Consistency.** Using the FQDN makes bookmarks, API calls, and scripts portable across environments without hardcoding IP addresses.
-
-The `hosts` entry written by the client script maps the FQDN to the current IP, so the browser resolves correctly even without a local DNS server.
-
----
-
-- **Certificate CN**: `Proxmox VE Local Root CA (<hostname>)`
-
-- All persistent data is stored in a platform-specific directory:
-  - **Windows:** `%ProgramData%\pve-cert\`
-  - **Linux:** `~/.local/share/pve-cert/`
-  - **macOS:** `~/Library/Application Support/pve-cert/`
+This will display a list of registered servers and allow you to selectively or completely remove the hosts entries and imported CA certificates.
