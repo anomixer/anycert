@@ -61,74 +61,82 @@ if exist "!INFO_FILE!" (
     for /f "tokens=1,2" %%A in (!INFO_FILE!) do set HAS_SERVERS=1
 )
 
-if "!HAS_SERVERS!"=="1" (
-    echo   Currently registered Anycert servers:
-    echo   -----------------------------------
-    for /f "tokens=1,2" %%A in (!INFO_FILE!) do echo     %%A  ^<^>  %%B
-    echo.
-    echo Please select an action:
-    echo   [1] Add/Import a new certificate (Default)
-    echo   [2] Remove/Uninstall an existing certificate
-    echo   [3] Exit
-    echo.
-    set /p CLIENT_ACTION=  Please choose [1-3, default: 1]: 
-    if "!CLIENT_ACTION!"=="" set CLIENT_ACTION=1
-    if "!CLIENT_ACTION!"=="2" goto do_uninstall
-    if "!CLIENT_ACTION!"=="3" exit /b 0
-    echo.
-)
+if not "!HAS_SERVERS!"=="1" goto do_skip_menu
+
+echo   Currently registered Anycert servers:
+echo   -----------------------------------
+for /f "tokens=1,2" %%A in (!INFO_FILE!) do echo     %%A  ^<^>  %%B
+echo.
+echo Please select an action:
+echo   [1] Add/Import a new certificate [Default]
+echo   [2] Remove/Uninstall an existing certificate
+echo   [3] Exit
+echo.
+set /p CLIENT_ACTION=  Please choose [1-3, default: 1]: 
+if "!CLIENT_ACTION!"=="" set CLIENT_ACTION=1
+if "!CLIENT_ACTION!"=="2" goto do_uninstall
+if "!CLIENT_ACTION!"=="3" exit /b 0
+echo.
+
+:do_skip_menu
 
 :: ── Choose Import Mode ───────────────────────────────────────
 echo Please choose how to download/import the CA certificate:
 echo   [1] Automatically download via SSH (Default)
 echo   [2] Use a manually copied local CA certificate (Offline/Manual Mode)
 echo.
-set /p IMPORT_MODE=  Please choose [1-2]: 
+:choose_import_loop
+set /p IMPORT_MODE=  Please choose [1-2, default: 1]: 
 if "!IMPORT_MODE!"=="" set IMPORT_MODE=1
-
+if "!IMPORT_MODE!"=="1" goto do_import_ssh
 if "!IMPORT_MODE!"=="2" goto offline_mode
+echo [WARN] Invalid choice, please choose 1 or 2.
+echo.
+goto choose_import_loop
+
+:do_import_ssh
 
 :: ── Check SSH dependencies ───────────────────────────────────
 where ssh >nul 2>&1
-if %errorlevel% neq 0 (
-    if exist "C:\Program Files\Git\usr\bin\ssh.exe" (
-        set PATH=!PATH!;C:\Program Files\Git\usr\bin
-        goto ssh_ok
-    )
-    if exist "C:\Program Files (x86)\Git\usr\bin\ssh.exe" (
-        set PATH=!PATH!;C:\Program Files (x86)\Git\usr\bin
-        goto ssh_ok
-    )
+if %errorlevel% equ 0 goto ssh_ok
 
-    echo [WARN] ssh/scp command not found.
-    echo We can automatically install Git for Windows (built-in ssh/scp) via winget.
-    set /p INSTALL_GIT_CLI=  Do you want to automatically install Git? [y/N]: 
-    if /i "!INSTALL_GIT_CLI!"=="y" (
-        echo Installing Git for Windows via winget. Please allow installation in the UAC popup...
-        winget install -e --id Git.Git
-        if !errorlevel! equ 0 (
-            echo   [OK] Git installation complete! Refreshing path...
-            if exist "C:\Program Files\Git\usr\bin\ssh.exe" (
-                set PATH=!PATH!;C:\Program Files\Git\usr\bin
-                goto ssh_ok
-            )
-            where ssh >nul 2>&1
-            if !errorlevel! equ 0 goto ssh_ok
-            echo   [WARN] Installation complete, but ssh still cannot be executed directly.
-            echo   Please restart this Command Prompt window to apply environment variables, then run this script again.
-            pause
-            exit /b 0
-        ) else (
-            echo   [ERROR] winget installation failed. Please install Git manually.
-        )
-    )
-
-    echo [ERROR] ssh/scp command not found!
-    echo Please install Git for Windows or enable OpenSSH Client in Windows optional features first.
-    echo.
-    pause
-    exit /b 1
+if exist "C:\Program Files\Git\usr\bin\ssh.exe" (
+    set "PATH=!PATH!;C:\Program Files\Git\usr\bin"
+    goto ssh_ok
 )
+if exist "C:\Program Files (x86)\Git\usr\bin\ssh.exe" (
+    set "PATH=!PATH!;C:\Program Files (x86)\Git\usr\bin"
+    goto ssh_ok
+)
+
+echo [WARN] ssh/scp command not found.
+echo We can automatically install Git for Windows [built-in ssh/scp] via winget.
+set /p INSTALL_GIT_CLI=  Do you want to automatically install Git? [y/N]: 
+if /i "!INSTALL_GIT_CLI!"=="y" (
+    echo Installing Git for Windows via winget. Please allow installation in the UAC popup...
+    winget install -e --id Git.Git
+    if !errorlevel! equ 0 (
+        echo   [OK] Git installation complete! Refreshing path...
+        if exist "C:\Program Files\Git\usr\bin\ssh.exe" (
+            set "PATH=!PATH!;C:\Program Files\Git\usr\bin"
+            goto ssh_ok
+        )
+        where ssh >nul 2>&1
+        if !errorlevel! equ 0 goto ssh_ok
+        echo   [WARN] Installation complete, but ssh still cannot be executed directly.
+        echo   Please restart this Command Prompt window to apply environment variables, then run this script again.
+        pause
+        exit /b 0
+    ) else (
+        echo   [ERROR] winget installation failed. Please install Git manually.
+    )
+)
+
+echo [ERROR] ssh/scp command not found!
+echo Please install Git for Windows or enable OpenSSH Client in Windows optional features first.
+echo.
+pause
+exit /b 1
 :ssh_ok
 
 :: ── Step 1 ───────────────────────────────────────────────────
@@ -162,6 +170,9 @@ if exist "!INFO_FILE!" (
 set /p SSH_USER=  SSH Username [default: root]: 
 if "!SSH_USER!"=="" set SSH_USER=root
 
+set /p SERVER_OS=  Is the remote server running Windows Server? [Y/n]: 
+if "!SERVER_OS!"=="" set SERVER_OS=y
+
 echo.
 echo   [Tip] You will be prompted to enter the SSH password shortly.
 echo.
@@ -177,17 +188,35 @@ echo   Source      : !SSH_USER!@!SERVER_IP!:!CA_REMOTE!
 echo   Destination : !CA_LOCAL!
 echo.
 
-:: Try multiple paths
+:: Path probing by OS selection
+set SMB_CONNECTED=0
+
+if /i "!SERVER_OS!"=="y" goto scp_windows
+
+:: Otherwise, try Linux paths
 scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:!CA_REMOTE!" "!CA_LOCAL!"
-if !errorlevel! neq 0 (
-    echo   [INFO] Linux default path download failed. Probing Windows server path (C:/anycert/anycert-ca.crt)...
-    scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:C:/anycert/anycert-ca.crt" "!CA_LOCAL!"
-    if !errorlevel! neq 0 (
-        echo   [INFO] Probing backup path (/root/anycert/anycert-ca.crt)...
-        scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!"
-        if !errorlevel! neq 0 goto scp_failed
-    )
-)
+if !errorlevel! equ 0 goto scp_ok
+
+echo   [INFO] Linux default path download failed. Probing backup path [/root/anycert/anycert-ca.crt]...
+scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!"
+if !errorlevel! equ 0 goto scp_ok
+goto scp_failed
+
+:scp_windows
+echo   [INFO] Probing Windows server path [C:/anycert/anycert-ca.crt]...
+scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:C:/anycert/anycert-ca.crt" "!CA_LOCAL!"
+if !errorlevel! equ 0 goto scp_ok
+
+echo   [INFO] SCP download failed. Probing Windows SMB share [C$]...
+set /p SERVER_PASS=  Enter password for !SSH_USER! to connect via SMB: 
+net use \\!SERVER_IP!\c$ "!SERVER_PASS!" /user:"!SSH_USER!" >nul 2>&1
+if !errorlevel! neq 0 goto scp_failed
+
+copy /y "\\!SERVER_IP!\c$\anycert\anycert-ca.crt" "!CA_LOCAL!" >nul 2>&1
+if not exist "!CA_LOCAL!" goto scp_failed
+
+set SMB_CONNECTED=1
+echo   [OK] CA certificate successfully copied via SMB Share!
 goto scp_ok
 
 :scp_failed
@@ -220,17 +249,34 @@ echo -----------------------------------------------------
 echo.
 
 set SERVER_DNS=
-:: Try hostname -f
-for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'hostname -f' 2>$null"`) do (
-    if "!SERVER_DNS!"=="" set SERVER_DNS=%%H
-)
-:: Try Windows PowerShell FQDN fallback
-if "!SERVER_DNS!"=="" (
-    for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'powershell -NoProfile -Command \"[System.Net.Dns]::GetHostEntry('''').HostName\"' 2>$null"`) do (
-        if "!SERVER_DNS!"=="" set SERVER_DNS=%%H
+
+:: If connected via SMB, parse remote anycert.conf directly
+if "!SMB_CONNECTED!"=="1" (
+    if exist "\\!SERVER_IP!\c$\anycert\anycert.conf" (
+        echo   [INFO] Parsing remote config file via SMB...
+        for /f "usebackq tokens=1,2 delims==" %%A in ("\\!SERVER_IP!\c$\anycert\anycert.conf") do (
+            if "%%A"=="SERVER_FQDN" set "SERVER_DNS=%%B"
+        )
     )
 )
 
+if not "!SERVER_DNS!"=="" goto dns_trim_and_ok
+
+if /i "!SERVER_OS!"=="y" goto dns_windows
+
+:: Try hostname -f (Linux)
+powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'hostname -f' 2>$null" > "!DATA_DIR!\fqdn.tmp"
+set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
+if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
+goto dns_trim_and_ok
+
+:dns_windows
+:: Try Windows PowerShell FQDN fallback
+powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'powershell -NoProfile -Command \"[System.Net.Dns]::GetHostEntry('''').HostName\"' 2>$null" > "!DATA_DIR!\fqdn.tmp"
+set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
+if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
+
+:dns_trim_and_ok
 :: Trim output
 if not "!SERVER_DNS!"=="" (
     for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "'!SERVER_DNS!'.Trim()"`) do set SERVER_DNS=%%D
@@ -249,6 +295,9 @@ if "!SERVER_DNS!"=="" (
 )
 
 :dns_ok
+if "!SMB_CONNECTED!"=="1" (
+    net use \\!SERVER_IP!\c$ /delete >nul 2>&1
+)
 echo   [OK] Detected server DNS name: !SERVER_DNS!
 echo.
 
@@ -377,6 +426,11 @@ if "!SITE_CHOICE!"=="0" goto uninstall_all
 set CHOSEN_IP=!SITE_IP_%SITE_CHOICE%!
 set CHOSEN_DNS=!SITE_DNS_%SITE_CHOICE%!
 set CHOSEN_THUMB=!SITE_THUMB_%SITE_CHOICE%!
+for /f "delims=" %%I in ("!SITE_CHOICE!") do (
+    set CHOSEN_IP=!SITE_IP_%%I!
+    set CHOSEN_DNS=!SITE_DNS_%%I!
+    set CHOSEN_THUMB=!SITE_THUMB_%%I!
+)
 if "!CHOSEN_IP!"=="" goto uninstall_abort
 
 echo.
@@ -445,20 +499,8 @@ echo.
 echo   --- Removing: !R_IP! !R_DNS! ---
 
 :: Remove from hosts
-set DNS_IN_HOSTS=0
-for /f "tokens=" %%L in ('type "!HOSTS_FILE!"') do (
-    echo %%L | findstr /i "!R_DNS!" >nul 2>&1
-    if !errorlevel! equ 0 set DNS_IN_HOSTS=1
-)
-if "!DNS_IN_HOSTS!"=="0" (
-    echo   [SKIP] Hosts entry not found for: !R_DNS!
-) else (
-    set TEMP_HOSTS=%TEMP%\hosts.tmp
-    findstr /v /i "!R_DNS!" "!HOSTS_FILE!" > "!TEMP_HOSTS!"
-    findstr /v /i "anycert-windows.bat" "!TEMP_HOSTS!" > "!HOSTS_FILE!"
-    del "!TEMP_HOSTS!"
-    echo   [OK] Removed hosts entry: !R_DNS!
-)
+powershell -NoProfile -Command "$p = 'C:\Windows\System32\drivers\etc\hosts'; if (Test-Path $p) { $lines = Get-Content $p; $new = $lines | Where-Object { $_ -notmatch '!R_DNS!' -and $_ -notmatch 'Anycert Server \[!R_IP!\]' }; [System.IO.File]::WriteAllLines($p, $new) }" >nul 2>&1
+echo   [OK] Removed hosts entry: !R_DNS!
 
 :: Remove cert by THUMBPRINT
 if not "!R_THUMB!"=="" (

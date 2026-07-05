@@ -101,9 +101,9 @@ sudo bash anycert.sh
 ```
 The script will:
 1. Auto-detect your IP, hostname, and FQDN.
-2. Let you choose a deployment profile:
-   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port+10000` to `HTTP Port`) with WebSocket support out of the box (e.g. for Open WebUI).
-   - **Proxmox VE (PVE)**: Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
+2. Let you choose a deployment profile (offers **3 options** on standard servers, and auto-detects Proxmox VE to offer **4 options**):
+   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port+10000` to `HTTP Port`).
+   - **Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
    - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (e.g. for pre-configured setups).
    - **Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
 
@@ -113,6 +113,15 @@ Run Command Prompt (cmd) as **Administrator** and execute:
 anycert.bat
 ```
 The script will search for OpenSSL (e.g. from Git for Windows), generate the certificates, and allow you to deploy them using the Nginx automatic proxy (automatic download & setup) or to custom paths (e.g. IIS).
+
+> [!TIP]
+> **✨ Smart Configuration & Update Menu**
+> If your server already has anycert certificates installed, executing `anycert.sh` or `anycert.bat` again will automatically detect the installation and present an action menu:
+> 1. **Update/Modify Nginx Ports**: Change proxy port mappings without regenerating certificates.
+>    - **Overwrite Mode**: Enter a space-separated list of ports (e.g. `3000 8080`) to completely overwrite the current ports.
+>    - **Adjustment Mode**: Prefix ports with `+` or `-` (e.g. `+8080 -3000`) to incrementally add `8080` and remove `3000` from Nginx proxy wrappers. Nginx configuration will reload automatically.
+> 2. **Renew/Regenerate SSL Certificates**: Keeps the existing Nginx proxy ports configuration but renews expired server certificates.
+> 3. **Uninstall**: Completely restores the original settings and cleans up certificate directories.
 
 ---
 
@@ -138,9 +147,15 @@ sudo bash anycert-macos.sh
 
 The client scripts will:
 1. Ask for the Server IP and SSH username.
-2. Automatically download the Root CA certificate via `scp`.
+2. **Smart Transmission & CA Download**:
+   - **SCP Download**: Attempts to safely copy the Root CA certificate using SCP first.
+   - **SMB Fallback (Specifically for Windows Server)**: If the remote server is running Windows and SSH is unavailable (causing SCP to fail), the client script will automatically fall back to the **Windows SMB (Port 445) channel**.
+     - *Linux Client*: Automatically checks and installs `smbclient` if missing, then fetches the certificate directly.
+     - *macOS Client*: Uses the native `mount_smbfs` system command to cleanly mount the `c$` administrative share and fetch the file.
+     - *Smart FQDN Detection*: If SMB connects successfully, it will parse the remote `anycert.conf` directly to extract the FQDN, saving you from entering passwords multiple times or setting up SSH.
+   - **Offline / Manual Copy Mode**: If the Windows Server has disabled both SSH and SMB, you can choose `Option 2` (Manual Mode) to manually transfer the `anycert-ca.crt` file using a USB drive, RDP, or other methods. The script will still handle the entire installation process on the client.
 3. Detect the server's FQDN and add a mapping to the local `hosts` file.
-4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles).
+4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles, macOS handles Keychain).
 
 ---
 

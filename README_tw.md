@@ -101,9 +101,9 @@ sudo bash anycert.sh
 ```
 腳本將會：
 1. 自動偵測 IP、主機名稱與 FQDN。
-2. 提供三個服務部署設定檔 (Service Profile) 選擇：
-   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port+10000` 到 `HTTP Port` 的反向代理封裝（完美相容 WebSockets 連結，如 Open WebUI 等服務）。
-   - **Proxmox VE (PVE)**：自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
+2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **3 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **4 個**）：
+   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port+10000` 到 `HTTP Port` 的反向代理封裝。
+   - **Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
    - **Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成服務的環境）。
    - **Generate Only [Painful / Hard Way]**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
 
@@ -113,6 +113,15 @@ sudo bash anycert.sh
 anycert.bat
 ```
 腳本將會搜尋系統中的 OpenSSL（例如 Git for Windows 內建的 OpenSSL），簽發憑證後，提供與 Linux 完全一致的 Nginx 一鍵代理功能（自動下載 Nginx 設定並啟動），或允許您將憑證部署到自訂路徑（如 IIS）。
+
+> [!TIP]
+> **✨ 智慧設定更新選單**
+> 若您的伺服器已經安裝過 anycert 憑證，再次執行 `anycert.sh` 或 `anycert.bat` 時，系統會自動辨識並跳出選擇選單：
+> 1. **更新/修改 Nginx Port 對應**：不需要重新簽發憑證，可以直接輸入新的 Port。
+>    - **覆蓋模式**：直接輸入連接埠（如 `3000 8080`），將完全取代現有配置。
+>    - **增量/減量微調**：使用 `+` 或 `-` 作為首字元（如 `+8080 -3000`），即可無痛增加 `8080` 埠並刪除 `3000` 埠代理，自動重載 Nginx 生效。
+> 2. **重新產生/更新 SSL 憑證**：保留目前的 Port 代理設定，重新簽發過期的伺服器憑證。
+> 3. **完整解除安裝並還原設定**。
 
 ---
 
@@ -138,9 +147,15 @@ sudo bash anycert-macos.sh
 
 這些腳本會：
 1. 提示輸入伺服器 IP 與 SSH 使用者名稱。
-2. 智慧偵測伺服器 OS，並自動透過 `scp` 下載 Root CA 憑證。
-3. 透過 SSH 偵測伺服器的 FQDN，並自動寫入用戶端的 `hosts` 檔案中。
-4. 將 CA 憑證匯入系統信任區（Linux 版會同時自動匯入 Chrome 與 Firefox 的 NSS 憑證庫）。
+2. **智慧傳輸與下載 Root CA**：
+   - **SCP 下載**：優先使用 scp 進行安全複製。
+   - **SMB 備用通道 (特別針對 Windows 伺服器)**：若遠端伺服器為 Windows 且未開通 SSH 服務（導致 SCP 失敗），用戶端腳本會自動改走 **Windows SMB (Port 445) 管道**。
+     - *Linux 用戶端*：自動檢查並引導安裝 `smbclient`，直接拉取憑證。
+     - *macOS 用戶端*：使用內建 `mount_smbfs` 機制無痕掛載 `c$` 共用區拉取。
+     - *智慧 FQDN 讀取*：若使用 SMB 連線成功，將直接解析 remote 的 `anycert.conf` 取得 FQDN，完全免除 SSH 連線或密碼手動重複輸入。
+   - **離線手動複製模式 (Offline / Manual Mode)**：若 Windows Server 既無 SSH 也無 SMB，您可選擇 `Option 2`（Manual Mode），手動以隨身碟、RDP 或其他方式拷貝 CA 憑證至本機，腳本仍會為您自動執行後續所有的信任區與 hosts 安裝設定！
+3. **FQDN 自動對應**：自動將 FQDN 寫入用戶端的 `hosts` 檔案中。
+4. **系統與瀏覽器信任**：將 CA 憑證匯入系統信任區（Linux 版會同時自動匯入 Chrome 與 Firefox 的 NSS 憑證資料庫，macOS 版匯入 Keychain）。
 
 ---
 

@@ -58,8 +58,59 @@ if [[ "${1:-}" == "-u" ]]; then
     echo "-----------------------------------------------------"
     echo
 
+    remove_one() {
+        local R_IP="$1" R_DNS="$2" R_FINGER="$3"
+        echo
+        echo "  --- Removing: $R_IP $R_DNS ---"
+
+        # Remove hosts entry
+        if grep -qi "$R_DNS" "$HOSTS_FILE" 2>/dev/null; then
+            if [[ -n "$R_IP" ]]; then
+                sed -i '' "/# Anycert Server \[$R_IP\]/d" "$HOSTS_FILE"
+                sed -i '' "/^$R_IP[[:space:]][[:space:]]*$R_DNS/d" "$HOSTS_FILE"
+            else
+                sed -i '' "/$R_DNS/d" "$HOSTS_FILE"
+            fi
+            echo "  [OK] Removed hosts entry: $R_DNS"
+        else
+            echo "  [SKIP] Hosts entry not found for: $R_DNS"
+        fi
+
+        if [[ -n "$R_IP" ]]; then
+            # Remove cert from macOS Keychain
+            if [[ -n "$R_FINGER" ]]; then
+                local SHA1
+                SHA1=$(echo "$R_FINGER" | tr -d ':' | tr '[:upper:]' '[:lower:]')
+                if security delete-certificate -Z "$SHA1" /Library/Keychains/System.keychain 2>/dev/null; then
+                    echo "  [OK] Removed CA certificate from macOS Keychain."
+                else
+                    echo "  [WARN] Cannot delete automatically. Please clean up manually:"
+                    echo "  Launch 'Keychain Access' > System > Certificates > delete entry containing $R_DNS"
+                fi
+            else
+                echo "  [WARN] Fingerprint record not found. Please clean up Keychain certificate manually."
+            fi
+
+            # Remove local cached cert
+            [[ -f "$DATA_DIR/anycert-ca-${R_IP}.crt" ]] && rm -f "$DATA_DIR/anycert-ca-${R_IP}.crt" && echo "  [OK] Cached certificate file deleted."
+
+            # Remove from info file
+            if [[ -f "$INFO_FILE" ]]; then
+                grep -v "^$R_IP " "$INFO_FILE" > "$INFO_FILE.tmp" || true
+                mv "$INFO_FILE.tmp" "$INFO_FILE"
+            fi
+        fi
+    }
+
     if [[ ! -f "$INFO_FILE" ]]; then
-        echo "  No registered servers detected."
+        echo "  No registered servers found. Please manually enter DNS name to clean up:"
+        read -rp "  DNS Name [e.g. my-server.local]: " MANUAL_DNS
+        [[ -z "$MANUAL_DNS" ]] && { echo "  Cancelled."; exit 0; }
+        remove_one "" "$MANUAL_DNS" ""
+        echo
+        echo "====================================================="
+        echo "  Uninstallation Complete!"
+        echo "====================================================="
         exit 0
     fi
 
@@ -71,7 +122,14 @@ if [[ "${1:-}" == "-u" ]]; then
     SITE_COUNT=${#LINES[@]}
 
     if [[ $SITE_COUNT -eq 0 ]]; then
-        echo "  No registered servers detected."
+        echo "  No registered servers found. Please manually enter DNS name to clean up:"
+        read -rp "  DNS Name [e.g. my-server.local]: " MANUAL_DNS
+        [[ -z "$MANUAL_DNS" ]] && { echo "  Cancelled."; exit 0; }
+        remove_one "" "$MANUAL_DNS" ""
+        echo
+        echo "====================================================="
+        echo "  Uninstallation Complete!"
+        echo "====================================================="
         exit 0
     fi
 
@@ -85,44 +143,6 @@ if [[ "${1:-}" == "-u" ]]; then
     echo "    [0]  Remove All"
     echo
     read -rp "  Please choose [1-$SITE_COUNT, 0=all]: " CHOICE
-
-    remove_one() {
-        local R_IP="$1" R_DNS="$2" R_FINGER="$3"
-        echo
-        echo "  --- Removing: $R_IP $R_DNS ---"
-
-        # Remove hosts entry
-        if grep -qi "$R_DNS" "$HOSTS_FILE" 2>/dev/null; then
-            sed -i '' "/# Anycert Server \[$R_IP\]/d" "$HOSTS_FILE"
-            sed -i '' "/^$R_IP[[:space:]][[:space:]]*$R_DNS/d" "$HOSTS_FILE"
-            echo "  [OK] Removed hosts entry: $R_DNS"
-        else
-            echo "  [SKIP] Hosts entry not found for: $R_DNS"
-        fi
-
-        # Remove cert from macOS Keychain
-        if [[ -n "$R_FINGER" ]]; then
-            local SHA1
-            SHA1=$(echo "$R_FINGER" | tr -d ':' | tr '[:upper:]' '[:lower:]')
-            if security delete-certificate -Z "$SHA1" /Library/Keychains/System.keychain 2>/dev/null; then
-                echo "  [OK] Removed CA certificate from macOS Keychain."
-            else
-                echo "  [WARN] Cannot delete automatically. Please clean up manually:"
-                echo "  Launch 'Keychain Access' > System > Certificates > delete entry containing $R_DNS"
-            fi
-        else
-            echo "  [WARN] Fingerprint record not found. Please clean up Keychain certificate manually."
-        fi
-
-        # Remove local cached cert
-        [[ -f "$DATA_DIR/anycert-ca-${R_IP}.crt" ]] && rm -f "$DATA_DIR/anycert-ca-${R_IP}.crt" && echo "  [OK] Cached certificate file deleted."
-
-        # Remove from info file
-        if [[ -n "$R_IP" && -f "$INFO_FILE" ]]; then
-            grep -v "^$R_IP " "$INFO_FILE" > "$INFO_FILE.tmp" || true
-            mv "$INFO_FILE.tmp" "$INFO_FILE"
-        fi
-    }
 
     if [[ "$CHOICE" == "0" ]]; then
         read -rp "  Are you sure you want to remove all $SITE_COUNT registered servers? [y/N]: " CONFIRM
@@ -241,6 +261,9 @@ fi
 read -rp "  SSH Username [default: root]: " SSH_USER
 SSH_USER=${SSH_USER:-root}
 
+read -rp "  Is the remote server running Windows Server? [Y/n]: " SERVER_OS
+SERVER_OS=${SERVER_OS:-y}
+
 echo
 echo "  [Tip] You will be prompted to enter the SSH password shortly."
 echo
@@ -256,17 +279,51 @@ echo "  Source      : ${SSH_USER}@${SERVER_IP}:${CA_REMOTE}"
 echo "  Destination : $CA_LOCAL"
 echo
 
-# Try probing download paths
-if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
-    echo "  [INFO] Linux default path invalid. Probing Windows server path (C:/anycert/anycert-ca.crt)..."
+# Try probing download paths based on server OS
+SMB_CONNECTED=false
+SMB_PASS=""
+if [[ "${SERVER_OS,,}" == "y" ]]; then
+    # Windows server
     if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
-        echo "  [INFO] Probing backup path (/root/anycert/anycert-ca.crt)..."
+        echo "  [INFO] SCP download failed. Probing Windows SMB share [C$]..."
+        
+        read -srp "  Enter password for ${SSH_USER} to connect via SMB: " SMB_PASS
+        echo ""
+        
+        local mount_dir="/tmp/anycert_smb_mount"
+        mkdir -p "$mount_dir"
+        
+        # Mount and copy
+        if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
+            if [[ -f "${mount_dir}/anycert/anycert-ca.crt" ]]; then
+                cp "${mount_dir}/anycert/anycert-ca.crt" "$CA_LOCAL"
+                echo "  [OK] CA certificate successfully copied via SMB Share!"
+                SMB_CONNECTED=true
+            fi
+            umount "$mount_dir" >/dev/null 2>&1
+        fi
+        rmdir "$mount_dir" >/dev/null 2>&1
+
+        if [[ "$SMB_CONNECTED" != "true" ]]; then
+            echo
+            echo "[ERROR] Certificate download failed! Please check:"
+            echo "  1. Server IP address is correct: $SERVER_IP"
+            echo "  2. SSH / SMB credentials are correct"
+            echo "  3. The server-side anycert.bat has been executed to generate the certificate"
+            echo "  4. Firewall allows SSH (Port 22) or SMB (Port 445)"
+            exit 1
+        fi
+    fi
+else
+    # Linux server
+    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
+        echo "  [INFO] Linux default path failed. Probing backup path (/root/anycert/anycert-ca.crt)..."
         if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
             echo
             echo "[ERROR] Certificate download failed! Please check:"
             echo "  1. Server IP address is correct: $SERVER_IP"
             echo "  2. SSH credentials are correct"
-            echo "  3. The server-side anycert.sh or anycert.bat has been executed to generate the certificate"
+            echo "  3. The server-side anycert.sh has been executed to generate the certificate"
             echo "  4. Firewall allows SSH connections on Port 22"
             exit 1
         fi
@@ -288,10 +345,26 @@ echo "[Step 3/5] Auto-detect Server FQDN"
 echo "-----------------------------------------------------"
 echo
 
-# Probe FQDN
-SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+# Probe FQDN based on server OS or SMB connection
+SERVER_DNS=""
+if [[ "$SMB_CONNECTED" == "true" ]]; then
+    local mount_dir="/tmp/anycert_smb_mount"
+    mkdir -p "$mount_dir"
+    if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
+        if [[ -f "${mount_dir}/anycert/anycert.conf" ]]; then
+            SERVER_DNS=$(grep "^SERVER_FQDN=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n')
+        fi
+        umount "$mount_dir" >/dev/null 2>&1
+    fi
+    rmdir "$mount_dir" >/dev/null 2>&1
+fi
+
 if [[ -z "$SERVER_DNS" ]]; then
-    SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry(\"\").HostName"' 2>/dev/null || true)
+    if [[ "${SERVER_OS,,}" == "y" ]]; then
+        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry(\"\").HostName"' 2>/dev/null || true)
+    else
+        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+    fi
 fi
 
 # Clean up string

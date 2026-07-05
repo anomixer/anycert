@@ -649,6 +649,10 @@ EOF
     info "Generated files only, not applied to any service."
   fi
 
+  if [[ "${ONLY_UPDATE_PORTS:-0}" == "1" ]]; then
+    return
+  fi
+
   # ── Import CA locally (optional) ──
   echo ""
   read -rp "$(echo -e "${YELLOW}Do you want to import this Root CA into this server's local system trust store? [y/N]${RESET} ")" LOCAL_TRUST
@@ -797,9 +801,50 @@ show_summary() {
   ok "Installation completed successfully!"
 }
 
+process_port_adjustments() {
+  # Check if NEW_PROXY_PORTS contains '-'
+  if [[ "$NEW_PROXY_PORTS" != *"-"* ]]; then
+    # No '-' found, simple overwrite
+    PROXY_PORTS="$NEW_PROXY_PORTS"
+    return
+  fi
+
+  # Incremental/decremental adjustment mode
+  for TOKEN in $NEW_PROXY_PORTS; do
+    if [[ "$TOKEN" =~ ^-([0-9]+)$ ]]; then
+      local TARGET_PORT="${BASH_REMATCH[1]}"
+      # Remove TARGET_PORT from PROXY_PORTS
+      local NEW_LIST=""
+      for P in $PROXY_PORTS; do
+        if [[ "$P" != "$TARGET_PORT" ]]; then
+          NEW_LIST="$NEW_LIST $P"
+        fi
+      done
+      PROXY_PORTS=$(echo "$NEW_LIST" | xargs)
+    else
+      local TARGET_PORT="$TOKEN"
+      if [[ "$TOKEN" =~ ^\+([0-9]+)$ ]]; then
+        TARGET_PORT="${BASH_REMATCH[1]}"
+      fi
+      # Add TARGET_PORT to PROXY_PORTS if not already present
+      local ALREADY_HAS=0
+      for P in $PROXY_PORTS; do
+        if [[ "$P" == "$TARGET_PORT" ]]; then
+          ALREADY_HAS=1
+          break
+        fi
+      done
+      if [[ $ALREADY_HAS -eq 0 ]]; then
+        PROXY_PORTS="$PROXY_PORTS $TARGET_PORT"
+      fi
+    fi
+  done
+  PROXY_PORTS=$(echo "$PROXY_PORTS" | xargs)
+}
+
 check_existing_cert() {
   if [[ -f "$SERVER_CRT" ]]; then
-    echo "An existing certificate is already installed."
+    echo "An existing certificate setup is detected."
     echo "-----------------------------------------------------"
     
     # Parse subject and expiration
@@ -818,24 +863,69 @@ check_existing_cert() {
     
     echo "  Subject/FQDN : $CERT_SUBJ"
     echo "  Days Left    : $DAYS_LEFT days"
-    echo ""
-    
-    read -rp "  Would you like to uninstall this certificate and restore settings? [y/N]: " UNINSTALL_CERT
-    if [[ "$UNINSTALL_CERT" =~ ^[Yy]$ ]]; then
-      do_uninstall
-      exit 0
+    echo "  Current Profile : ${PROFILE:-none}"
+    if [[ "${PROFILE:-none}" == "nginx_proxy" ]]; then
+      echo "  Current Mapped Ports : ${PROXY_PORTS:-}"
     fi
+    echo ""
     
     if [[ $DAYS_LEFT -lt 30 ]]; then
       warn "This certificate is expiring soon ($DAYS_LEFT days left)!"
+      echo ""
     fi
     
-    read -rp "  Would you like to renew/regenerate the certificate now? [y/N]: " RENEW_CERT
-    if [[ ! "$RENEW_CERT" =~ ^[Yy]$ ]]; then
-      info "Keeping existing certificate. Exiting..."
+    echo "Please choose an action:"
+    if [[ "${PROFILE:-none}" == "nginx_proxy" ]]; then
+      echo "  [1] Update/Modify Nginx port mappings"
+    else
+      echo "  [1] Update/Modify Nginx port mappings (Switch to Nginx SSL Proxy)"
+    fi
+    echo "  [2] Renew/Regenerate the SSL certificate"
+    echo "  [3] Uninstall and restore original settings"
+    echo "  [4] Keep existing and exit"
+    echo ""
+    
+    local choice=""
+    while true; do
+      read -rp "  Please choose [1-4]: " choice
+      if [[ "$choice" =~ ^[1-4]$ ]]; then
+        break
+      fi
+      warn "Invalid choice, please try again."
+    done
+    
+    if [[ "$choice" == "1" ]]; then
+      echo ""
+      echo "[Update Nginx Port Mappings]"
+      echo "-----------------------------------------------------"
+      echo "  Current proxy ports: ${PROXY_PORTS:-}"
+      echo "  Rules:"
+      echo "    - To overwrite: Enter list of ports [e.g. 3000 8080]"
+      echo "    - To adjust   : Use + to add, - to remove [e.g. +8080 -3000]"
+      echo ""
+      read -rp "  Enter new HTTP ports to wrap in SSL: " NEW_PROXY_PORTS
+      if [[ -n "$NEW_PROXY_PORTS" ]]; then
+        process_port_adjustments
+      fi
+      PROFILE="nginx_proxy"
+      ONLY_UPDATE_PORTS=1
+      
+      # Execute only the necessary steps for port update
+      install_cert
+      save_config
+      show_summary
+      exit 0
+    elif [[ "$choice" == "2" ]]; then
+      echo ""
+      info "Renewing Certificate. Keeping current settings..."
+      echo ""
+    elif [[ "$choice" == "3" ]]; then
+      do_uninstall
+      exit 0
+    elif [[ "$choice" == "4" ]]; then
+      info "Keeping existing settings. Exiting..."
       exit 0
     fi
-    echo ""
   fi
 }
 
@@ -848,6 +938,11 @@ check_deps
 if [[ "${1:-}" == "-u" ]]; then
   do_uninstall
   exit 0
+fi
+
+if [[ -f "$CONF_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$CONF_FILE"
 fi
 
 check_existing_cert

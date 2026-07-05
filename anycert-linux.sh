@@ -202,8 +202,57 @@ if [[ "${1:-}" == "-u" ]]; then
     echo "-----------------------------------------------------"
     echo
 
+    remove_one() {
+        local R_IP="$1" R_DNS="$2" R_FINGER="$3"
+        echo
+        echo "  --- Removing: $R_IP $R_DNS ---"
+
+        if grep -qi "$R_DNS" "$HOSTS_FILE" 2>/dev/null; then
+            if [[ -n "$R_IP" ]]; then
+                sed -i "/# Anycert Server \[$R_IP\]/d" "$HOSTS_FILE"
+                sed -i "/^$R_IP[[:space:]]\+$R_DNS/d" "$HOSTS_FILE"
+            else
+                sed -i "/$R_DNS/d" "$HOSTS_FILE"
+            fi
+            echo "  [OK] Removed hosts entry: $R_DNS"
+        else
+            echo "  [SKIP] Hosts entry not found for: $R_DNS"
+        fi
+
+        if [[ -n "$R_IP" ]]; then
+            local CERT_NAME="anycert-ca-${R_IP}.crt"
+            if [[ -f "$CA_TRUST_DIR/$CERT_NAME" ]]; then
+                rm -f "$CA_TRUST_DIR/$CERT_NAME"
+                if [[ "$CA_TOOL" == "update-ca-trust" ]]; then
+                    update-ca-trust extract
+                else
+                    update-ca-certificates
+                fi
+                echo "  [OK] CA certificate removed from system trust store."
+            else
+                echo "  [WARN] CA certificate not found in system trust store: $CA_TRUST_DIR/$CERT_NAME"
+            fi
+
+            remove_nss "anycert-ca-${R_IP}"
+
+            [[ -f "$DATA_DIR/anycert-ca-${R_IP}.crt" ]] && rm -f "$DATA_DIR/anycert-ca-${R_IP}.crt" && echo "  [OK] Cached certificate file deleted."
+
+            if [[ -f "$INFO_FILE" ]]; then
+                grep -v "^$R_IP " "$INFO_FILE" > "$INFO_FILE.tmp" || true
+                mv "$INFO_FILE.tmp" "$INFO_FILE"
+            fi
+        fi
+    }
+
     if [[ ! -f "$INFO_FILE" ]]; then
-        echo "  No registered servers detected."
+        echo "  No registered servers found. Please manually enter DNS name to clean up:"
+        read -rp "  DNS Name [e.g. my-server.local]: " MANUAL_DNS
+        [[ -z "$MANUAL_DNS" ]] && { echo "  Cancelled."; exit 0; }
+        remove_one "" "$MANUAL_DNS" ""
+        echo
+        echo "====================================================="
+        echo "  Uninstallation Complete!"
+        echo "====================================================="
         exit 0
     fi
 
@@ -211,7 +260,14 @@ if [[ "${1:-}" == "-u" ]]; then
     SITE_COUNT=${#LINES[@]}
 
     if [[ $SITE_COUNT -eq 0 ]]; then
-        echo "  No registered servers detected."
+        echo "  No registered servers found. Please manually enter DNS name to clean up:"
+        read -rp "  DNS Name [e.g. my-server.local]: " MANUAL_DNS
+        [[ -z "$MANUAL_DNS" ]] && { echo "  Cancelled."; exit 0; }
+        remove_one "" "$MANUAL_DNS" ""
+        echo
+        echo "====================================================="
+        echo "  Uninstallation Complete!"
+        echo "====================================================="
         exit 0
     fi
 
@@ -225,42 +281,6 @@ if [[ "${1:-}" == "-u" ]]; then
     echo "    [0]  Remove All"
     echo
     read -rp "  Please choose [1-$SITE_COUNT, 0=all]: " CHOICE
-
-    remove_one() {
-        local R_IP="$1" R_DNS="$2" R_FINGER="$3"
-        echo
-        echo "  --- Removing: $R_IP $R_DNS ---"
-
-        if grep -qi "$R_DNS" "$HOSTS_FILE" 2>/dev/null; then
-            sed -i "/# Anycert Server \[$R_IP\]/d" "$HOSTS_FILE"
-            sed -i "/^$R_IP[[:space:]]\+$R_DNS/d" "$HOSTS_FILE"
-            echo "  [OK] Removed hosts entry: $R_DNS"
-        else
-            echo "  [SKIP] Hosts entry not found for: $R_DNS"
-        fi
-
-        local CERT_NAME="anycert-ca-${R_IP}.crt"
-        if [[ -f "$CA_TRUST_DIR/$CERT_NAME" ]]; then
-            rm -f "$CA_TRUST_DIR/$CERT_NAME"
-            if [[ "$CA_TOOL" == "update-ca-trust" ]]; then
-                update-ca-trust extract
-            else
-                update-ca-certificates
-            fi
-            echo "  [OK] CA certificate removed from system trust store."
-        else
-            echo "  [WARN] CA certificate not found in system trust store: $CA_TRUST_DIR/$CERT_NAME"
-        fi
-
-        remove_nss "anycert-ca-${R_IP}"
-
-        [[ -f "$DATA_DIR/anycert-ca-${R_IP}.crt" ]] && rm -f "$DATA_DIR/anycert-ca-${R_IP}.crt" && echo "  [OK] Cached certificate file deleted."
-
-        if [[ -n "$R_IP" && -f "$INFO_FILE" ]]; then
-            grep -v "^$R_IP " "$INFO_FILE" > "$INFO_FILE.tmp" || true
-            mv "$INFO_FILE.tmp" "$INFO_FILE"
-        fi
-    }
 
     if [[ "$CHOICE" == "0" ]]; then
         read -rp "  Are you sure you want to remove all $SITE_COUNT registered servers? [y/N]: " CONFIRM
@@ -376,6 +396,9 @@ fi
 read -rp "  SSH Username [default: root]: " SSH_USER
 SSH_USER=${SSH_USER:-root}
 
+read -rp "  Is the remote server running Windows Server? [Y/n]: " SERVER_OS
+SERVER_OS=${SERVER_OS:-y}
+
 echo
 echo "  [Tip] You will be prompted to enter the SSH password shortly."
 echo
@@ -390,17 +413,57 @@ echo "  Source      : ${SSH_USER}@${SERVER_IP}:${CA_REMOTE}"
 echo "  Destination : $CA_LOCAL"
 echo
 
-# Try probing download paths
-if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
-    echo "  [INFO] Linux default path invalid. Probing Windows server path (C:/anycert/anycert-ca.crt)..."
+# Try probing download paths based on server OS
+SMB_CONNECTED=false
+SMB_PASS=""
+if [[ "${SERVER_OS,,}" == "y" ]]; then
+    # Windows server
     if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
-        echo "  [INFO] Probing backup path (/root/anycert/anycert-ca.crt)..."
+        echo "  [INFO] SCP download failed. Probing Windows SMB share [C$]..."
+        
+        # Check/install smbclient on Linux client
+        if ! command -v smbclient &>/dev/null; then
+            echo "  [INFO] Installing smbclient for Windows share support..."
+            if command -v apt-get &>/dev/null; then
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -y >/dev/null 2>&1 || true
+                apt-get install -y smbclient >/dev/null 2>&1 || true
+            elif command -v dnf &>/dev/null; then
+                dnf install -y samba-client >/dev/null 2>&1 || true
+            elif command -v yum &>/dev/null; then
+                yum install -y samba-client >/dev/null 2>&1 || true
+            fi
+        fi
+
+        if command -v smbclient &>/dev/null; then
+            read -srp "  Enter password for ${SSH_USER} to connect via SMB: " SMB_PASS
+            echo ""
+            if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}%${SMB_PASS}" -c "cd anycert; get anycert-ca.crt ${CA_LOCAL}" >/dev/null 2>&1; then
+                echo "  [OK] CA certificate successfully copied via SMB Share!"
+                SMB_CONNECTED=true
+            fi
+        fi
+
+        if [[ "$SMB_CONNECTED" != "true" ]]; then
+            echo
+            echo "[ERROR] Certificate download failed! Please check:"
+            echo "  1. Server IP address is correct: $SERVER_IP"
+            echo "  2. SSH / SMB credentials are correct"
+            echo "  3. The server-side anycert.bat has been executed to generate the certificate"
+            echo "  4. Firewall allows SSH (Port 22) or SMB (Port 445)"
+            exit 1
+        fi
+    fi
+else
+    # Linux server
+    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
+        echo "  [INFO] Linux default path failed. Probing backup path (/root/anycert/anycert-ca.crt)..."
         if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
             echo
             echo "[ERROR] Certificate download failed! Please check:"
             echo "  1. Server IP address is correct: $SERVER_IP"
             echo "  2. SSH credentials are correct"
-            echo "  3. The server-side anycert.sh or anycert.bat has been executed to generate the certificate"
+            echo "  3. The server-side anycert.sh has been executed to generate the certificate"
             echo "  4. Firewall allows SSH connections on Port 22"
             exit 1
         fi
@@ -419,10 +482,22 @@ echo "[Step 3/5] Auto-detect Server FQDN"
 echo "-----------------------------------------------------"
 echo
 
-# Probe FQDN
-SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+# Probe FQDN based on server OS or SMB connection
+SERVER_DNS=""
+if [[ "$SMB_CONNECTED" == "true" ]]; then
+    # Grab anycert.conf via smbclient
+    if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}%${SMB_PASS}" -c "cd anycert; get anycert.conf /tmp/anycert_conf.tmp" >/dev/null 2>&1; then
+        SERVER_DNS=$(grep "^SERVER_FQDN=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n')
+        rm -f /tmp/anycert_conf.tmp
+    fi
+fi
+
 if [[ -z "$SERVER_DNS" ]]; then
-    SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry(\"\").HostName"' 2>/dev/null || true)
+    if [[ "${SERVER_OS,,}" == "y" ]]; then
+        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry(\"\").HostName"' 2>/dev/null || true)
+    else
+        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+    fi
 fi
 
 # Clean up string
