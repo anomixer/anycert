@@ -221,21 +221,21 @@ echo.
 :: ── Choose profile ──────────────────────────────────────────
 echo [3/6] Please choose the Service Profile to apply
 echo -----------------------------------------------------
-echo   [1] Custom Path (Auto-Deploy)
-echo       - Copies certificates to your service folders (e.g. IIS, Nginx, Apache, Emby, Plex, Docker)
-echo       - Can automatically run a reload command to apply changes
-echo.
-echo   [2] Auto-Setup Nginx SSL Proxy (Port-Offset Wrapper) [Lazy-Friendly / Recommended]
+echo   [1] Auto-Setup Nginx SSL Proxy (Port-Offset Wrapper) [Lazy-Friendly / Recommended]
 echo       - Installs Nginx and automatically wraps your HTTP ports in SSL
 echo       - Keeps your existing apps running on HTTP, proxies to SSL Port + 10000
+echo.
+echo   [2] Custom Path (Auto-Deploy)
+echo       - Copies certificates to your service folders (e.g. IIS, Nginx, Apache, Emby, Plex, Docker)
+echo       - Can automatically run a reload command to apply changes
 echo.
 echo   [3] Generate Only (Manual Deploy) [Painful / Hard Way]
 echo       - Generates cert files in C:\anycert\ only
 echo       - Requires manual configuration for all your services
 echo.
 :choose_profile_loop
-set /p PROFILE_CHOICE=  Please choose [1-3, default: 2]: 
-if "!PROFILE_CHOICE!"=="" set PROFILE_CHOICE=2
+set /p PROFILE_CHOICE=  Please choose [1-3, default: 1]: 
+if "!PROFILE_CHOICE!"=="" set PROFILE_CHOICE=1
 
 if not "!PROFILE_CHOICE!"=="1" if not "!PROFILE_CHOICE!"=="2" if not "!PROFILE_CHOICE!"=="3" (
     echo [WARN] Invalid choice, please try again.
@@ -244,8 +244,8 @@ if not "!PROFILE_CHOICE!"=="1" if not "!PROFILE_CHOICE!"=="2" if not "!PROFILE_C
 )
 
 set PROFILE=none
-if "!PROFILE_CHOICE!"=="1" set PROFILE=custom
-if "!PROFILE_CHOICE!"=="2" set PROFILE=nginx_proxy
+if "!PROFILE_CHOICE!"=="1" set PROFILE=nginx_proxy
+if "!PROFILE_CHOICE!"=="2" set PROFILE=custom
 if "!PROFILE_CHOICE!"=="3" set PROFILE=none
 
 set CUSTOM_CERT=

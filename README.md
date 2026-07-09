@@ -104,8 +104,56 @@ The script will:
 2. Let you choose a deployment profile (offers **3 options** on standard servers, and auto-detects Proxmox VE to offer **4 options**):
    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port+10000` to `HTTP Port`).
    - **Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
-   - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (e.g. for pre-configured setups).
+   - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (for services that **already support native HTTPS**).
    - **Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
+
+> **Menu numbering note**: On `anycert.sh` (standard servers), options are `[1] Nginx` / `[2] Custom` / `[3] Generate Only`. On `anycert.bat`, they are `[1] Custom` / `[2] Nginx (default)` / `[3] Generate Only`. The diagrams below are labeled by **profile name**, not menu number.
+
+**Traffic flow by profile:**
+
+**Nginx SSL Proxy** — Best for plain HTTP services or multi-container setups. Apps keep their HTTP port; HTTPS is served on `Port + 10000`:
+
+```mermaid
+flowchart LR
+    subgraph nginxProxy [Nginx SSL Proxy]
+        ClientHTTP["Client http://ip:3000"] --> AppHTTP["App still on HTTP:3000"]
+        ClientHTTPS["Client https://ip:13000"] --> NginxSSL["Nginx SSL:13000"]
+        NginxSSL --> AppHTTP
+    end
+```
+
+**Custom Path** — Best when the service **already terminates HTTPS** (PVE, OMV, IIS, your own Nginx, etc.). Certs are copied in-place; clients use the **native port**:
+
+```mermaid
+flowchart LR
+    subgraph customPath [Custom Path]
+        AnyCert["anycert copies cert + key"] --> ServiceCert["Service cert path"]
+        ClientHTTPS["Client https://ip:nativePort"] --> ServiceTLS["Service terminates TLS"]
+        ServiceCert --> ServiceTLS
+        ServiceTLS --> AppBackend["App / Web UI"]
+    end
+```
+
+**Generate Only** — Issues and saves cert files only; you configure each service manually afterward:
+
+```mermaid
+flowchart LR
+    subgraph generateOnly [Generate Only]
+        AnyCertGen["anycert issues certs"] --> CertDir["Saved in anycert dir only"]
+        CertDir --> UserManual["User copies and configures"]
+        UserManual --> EachService["Per-service HTTPS setup"]
+    end
+```
+
+**Proxmox VE (Linux PVE only)** — Automated Custom Path; replaces `pveproxy` certs directly:
+
+```mermaid
+flowchart LR
+    subgraph pveMode [Proxmox VE]
+        AnyCertPVE["anycert replaces PVE certs"] --> PVEProxy["pveproxy"]
+        ClientHTTPS["Client https://ip:8006"] --> PVEProxy
+    end
+```
 
 #### Windows Server:
 Run Command Prompt (cmd) as **Administrator** and execute:

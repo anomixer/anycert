@@ -104,8 +104,56 @@ sudo bash anycert.sh
 2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **3 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **4 個**）：
    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port+10000` 到 `HTTP Port` 的反向代理封裝。
    - **Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
-   - **Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成服務的環境）。
+   - **Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成 HTTPS 服務的環境）。
    - **Generate Only [Painful / Hard Way]**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
+
+> **選單編號提示**：`anycert.sh` 一般伺服器為 `[1] Nginx` / `[2] Custom` / `[3] Generate Only`；`anycert.bat` 為 `[1] Custom` / `[2] Nginx（預設）` / `[3] Generate Only`。以下以**模式名稱**說明，與選單數字無關。
+
+**各模式流量示意：**
+
+**Nginx 一鍵代理** — 適合純 HTTP 服務、多容器並存；App 維持原 HTTP Port，HTTPS 走 `Port + 10000`：
+
+```mermaid
+flowchart LR
+    subgraph nginxProxy [Nginx 一鍵代理]
+        ClientHTTP["Client http://ip:3000"] --> AppHTTP["App 仍監聽 HTTP:3000"]
+        ClientHTTPS["Client https://ip:13000"] --> NginxSSL["Nginx SSL:13000"]
+        NginxSSL --> AppHTTP
+    end
+```
+
+**Custom Path** — 適合服務**本身已支援 HTTPS**（PVE、OMV、IIS、自架 Nginx 等）；憑證打入服務路徑後，以**原生 Port** 提供 HTTPS：
+
+```mermaid
+flowchart LR
+    subgraph customPath [Custom Path]
+        AnyCert["anycert 複製 cert + key"] --> ServiceCert["服務憑證路徑"]
+        ClientHTTPS["Client https://ip:原生Port"] --> ServiceTLS["服務自行終止 TLS"]
+        ServiceCert --> ServiceTLS
+        ServiceTLS --> AppBackend["App / Web UI"]
+    end
+```
+
+**Generate Only** — 只簽發並存檔，不自動部署；後續由使用者自行套用至各服務：
+
+```mermaid
+flowchart LR
+    subgraph generateOnly [Generate Only]
+        AnyCertGen["anycert 簽發憑證"] --> CertDir["僅存於 anycert 目錄"]
+        CertDir --> UserManual["使用者手動複製並設定"]
+        UserManual --> EachService["各服務 HTTPS 設定"]
+    end
+```
+
+**Proxmox VE（僅 Linux PVE 顯示）** — 等同自動化的 Custom Path，直接覆蓋 `pveproxy` 憑證：
+
+```mermaid
+flowchart LR
+    subgraph pveMode [Proxmox VE]
+        AnyCertPVE["anycert 覆蓋 PVE 憑證"] --> PVEProxy["pveproxy"]
+        ClientHTTPS["Client https://ip:8006"] --> PVEProxy
+    end
+```
 
 #### Windows 伺服器：
 以**系統管理員身分**執行命令提示字元 (cmd) 並執行：
