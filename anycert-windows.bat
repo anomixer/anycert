@@ -13,8 +13,10 @@ chcp 65001 >nul 2>&1
 
 title Anycert Client Certificate Installer
 
-:: Define ANSI colors
-for /F "delims=" %%A in ('powershell -NoProfile -Command "[char]27"') do set "ESC=%%A"
+:: Define ANSI colors (fully PowerShell-free and locale-safe)
+echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs"
+for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs"') do set "ESC=%%A"
+if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs"
 set "YELLOW=!ESC![1;33m"
 set "CYAN=!ESC![1;36m"
 set "BLUE=!ESC![1;34m"
@@ -36,7 +38,10 @@ if %errorlevel% neq 0 (
     echo [INFO] This script requires Administrator privileges.
     set /p ELEVATE_CONFIRM=  Would you like to elevate to Administrator now? [y/N]: 
     if /i "!ELEVATE_CONFIRM!"=="y" (
-        powershell -NoProfile -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~dp0%~nx0\"\" %*' -Verb RunAs"
+        echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
+        echo UAC.ShellExecute "cmd.exe", "/c ""%~dp0%~nx0"" %*", "", "runas", 1 >> "%temp%\getadmin.vbs"
+        "%temp%\getadmin.vbs"
+        del "%temp%\getadmin.vbs"
         exit /b 0
     )
     echo [ERROR] Administrator privileges are required to run this script.
@@ -236,9 +241,13 @@ echo   [OK] Certificate downloaded successfully!
 echo.
 
 :: ── Get cert thumbprint and save to info file later ──────────
-set CERT_THUMB=
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 '!CA_LOCAL!').Thumbprint"`) do (
-    if "!CERT_THUMB!"=="" set CERT_THUMB=%%T
+set "CERT_THUMB="
+for /f "skip=1 delims=" %%A in ('certutil -hashfile "%CA_LOCAL%" SHA1 2^>nul') do (
+    if not defined CERT_THUMB (
+        set "HASH=%%A"
+        set "HASH=!HASH: =!"
+        set "CERT_THUMB=!HASH!"
+    )
 )
 echo   [INFO] CA Certificate SHA-1 Fingerprint: !CERT_THUMB!
 echo.
@@ -249,6 +258,9 @@ echo -----------------------------------------------------
 echo.
 
 set SERVER_DNS=
+set REMOTE_PROXY_PORTS=
+set REMOTE_PORT_OFFSET=
+set REMOTE_PROFILE=
 
 :: If connected via SMB, parse remote anycert.conf directly
 if "!SMB_CONNECTED!"=="1" (
@@ -256,30 +268,59 @@ if "!SMB_CONNECTED!"=="1" (
         echo   [INFO] Parsing remote config file via SMB...
         for /f "usebackq tokens=1,2 delims==" %%A in ("\\!SERVER_IP!\c$\anycert\anycert.conf") do (
             if "%%A"=="SERVER_FQDN" set "SERVER_DNS=%%B"
+            if "%%A"=="PROXY_PORTS" set "REMOTE_PROXY_PORTS=%%B"
+            if "%%A"=="PORT_OFFSET" set "REMOTE_PORT_OFFSET=%%B"
+            if "%%A"=="PROFILE" set "REMOTE_PROFILE=%%B"
         )
     )
 )
 
-if not "!SERVER_DNS!"=="" goto dns_trim_and_ok
+:: If not yet fetched, try via SSH
+if "!SERVER_DNS!"=="" (
+    if /i "!SERVER_OS!"=="y" (
+        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "type C:\anycert\anycert.conf" > "!DATA_DIR!\conf.tmp" 2>nul
+    ) else (
+        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null" > "!DATA_DIR!\conf.tmp" 2>nul
+    )
+    if exist "!DATA_DIR!\conf.tmp" (
+        echo   [INFO] Parsing remote config file via SSH...
+        for /f "usebackq tokens=1,2 delims==" %%A in ("!DATA_DIR!\conf.tmp") do (
+            if "%%A"=="SERVER_FQDN" set "SERVER_DNS=%%B"
+            if "%%A"=="PROXY_PORTS" set "REMOTE_PROXY_PORTS=%%B"
+            if "%%A"=="PORT_OFFSET" set "REMOTE_PORT_OFFSET=%%B"
+            if "%%A"=="PROFILE" set "REMOTE_PROFILE=%%B"
+        )
+        del "!DATA_DIR!\conf.tmp"
+    )
+)
 
-if /i "!SERVER_OS!"=="y" goto dns_windows
+:: Fallback if SERVER_DNS still empty (older configurations)
+if "!SERVER_DNS!"=="" (
+    if /i "!SERVER_OS!"=="y" (
+        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "echo %%COMPUTERNAME%%" > "!DATA_DIR!\fqdn.tmp" 2>nul
+        set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
+        if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
+        if not "!SERVER_DNS!"=="" set "SERVER_DNS=!SERVER_DNS!"
+    ) else (
+        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "hostname -f" > "!DATA_DIR!\fqdn.tmp" 2>nul
+        set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
+        if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
+    )
+)
 
-:: Try hostname -f (Linux)
-powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'hostname -f' 2>$null" > "!DATA_DIR!\fqdn.tmp"
-set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
-if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
-goto dns_trim_and_ok
-
-:dns_windows
-:: Try Windows PowerShell FQDN fallback
-powershell -NoProfile -Command "& ssh -o StrictHostKeyChecking=no '!SSH_USER!@!SERVER_IP!' 'powershell -NoProfile -Command \"[System.Net.Dns]::GetHostEntry('''').HostName\"' 2>$null" > "!DATA_DIR!\fqdn.tmp"
-set /p SERVER_DNS=<"!DATA_DIR!\fqdn.tmp"
-if exist "!DATA_DIR!\fqdn.tmp" del "!DATA_DIR!\fqdn.tmp"
-
-:dns_trim_and_ok
-:: Trim output
+:: Trim output and strip surrounding quotes (remote conf stores values quoted)
 if not "!SERVER_DNS!"=="" (
-    for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "'!SERVER_DNS!'.Trim()"`) do set SERVER_DNS=%%D
+    for /f "tokens=* delims= " %%A in ("!SERVER_DNS!") do set "SERVER_DNS=%%A"
+    for /f "delims=" %%Q in ("!SERVER_DNS!") do set "SERVER_DNS=%%~Q"
+)
+if not "!REMOTE_PROXY_PORTS!"=="" (
+    for /f "delims=" %%Q in ("!REMOTE_PROXY_PORTS!") do set "REMOTE_PROXY_PORTS=%%~Q"
+)
+if not "!REMOTE_PORT_OFFSET!"=="" (
+    for /f "delims=" %%Q in ("!REMOTE_PORT_OFFSET!") do set "REMOTE_PORT_OFFSET=%%~Q"
+)
+if not "!REMOTE_PROFILE!"=="" (
+    for /f "delims=" %%Q in ("!REMOTE_PROFILE!") do set "REMOTE_PROFILE=%%~Q"
 )
 
 if "!SERVER_DNS!"=="" goto dns_fallback
@@ -371,22 +412,65 @@ echo =====================================================
 echo   Setup Complete!
 echo =====================================================
 echo.
-echo   Server IP   : !SERVER_IP!
-echo   Server DNS  : !SERVER_DNS!
-echo   CA Fingerprint: !CERT_THUMB!
-echo   CA Local Path : !CA_LOCAL!
+call :pad "Server IP" 17
+echo   !PADDED! : !SERVER_IP!
+call :pad "Server DNS" 17
+echo   !PADDED! : !SERVER_DNS!
+call :pad "CA Fingerprint" 17
+echo   !PADDED! : !CERT_THUMB!
+call :pad "CA Local Path" 17
+echo   !PADDED! : !CA_LOCAL!
+set "CA_FROM="
+set "CA_UNTIL="
+for /f "tokens=1* delims=:" %%A in ('certutil -dump "!CA_LOCAL!" 2^>nul ^| findstr /i "NotBefore"') do set "CA_FROM=%%B"
+for /f "tokens=1* delims=:" %%A in ('certutil -dump "!CA_LOCAL!" 2^>nul ^| findstr /i "NotAfter"') do set "CA_UNTIL=%%B"
+for /f "tokens=*" %%S in ("!CA_FROM!") do set "CA_FROM=%%S"
+for /f "tokens=*" %%S in ("!CA_UNTIL!") do set "CA_UNTIL=%%S"
+call :pad "CA Validity From" 17
+echo   !PADDED! : !CA_FROM!
+call :pad "CA Validity Until" 17
+echo   !PADDED! : !CA_UNTIL!
 echo.
 echo   All Currently Registered Anycert Servers:
 echo   -----------------------------------
 for /f "tokens=1,2,3" %%A in (!INFO_FILE!) do echo     %%A  ^<^>  %%B
 echo.
-echo   Please open in your browser: https://!SERVER_DNS!
+echo   Available HTTPS connections (you can open any in browser):
+if /i "!REMOTE_PROFILE!"=="pve" goto show_urls_pve
+if "!REMOTE_PROXY_PORTS!"=="" goto show_urls_generic
+if "!REMOTE_PORT_OFFSET!"=="" set REMOTE_PORT_OFFSET=10000
+set "SHOW_PORTS=!REMOTE_PROXY_PORTS!"
+:show_ports_loop
+if "!SHOW_PORTS!"=="" goto show_ports_done
+for /f "tokens=1*" %%A in ("!SHOW_PORTS!") do (
+    set "SHOW_P=%%A"
+    set "SHOW_PORTS=%%B"
+)
+set /a SHOW_SSL=!SHOW_P!+!REMOTE_PORT_OFFSET!
+if !SHOW_SSL! gtr 65535 set /a SHOW_SSL=!SHOW_P!-!REMOTE_PORT_OFFSET!
+echo     https://!SERVER_DNS!:!SHOW_SSL!   (via FQDN)
+echo     https://!SERVER_IP!:!SHOW_SSL!   (via IP, use this if app blocks hostname)
+echo       -^>  http://localhost:!SHOW_P!
+echo.
+goto show_ports_loop
+:show_ports_done
+goto show_urls_done
+
+:show_urls_generic
+echo     https://!SERVER_DNS!
+echo     https://!SERVER_IP!
+echo     (Run anycert.sh/bat on the server to configure Nginx SSL proxy ports)
+goto show_urls_done
+
+:show_urls_pve
+echo     https://!SERVER_DNS!:8006
+echo     https://!SERVER_IP!:8006
+goto show_urls_done
+
+:show_urls_done
 echo.
 echo   To uninstall, run: anycert-windows.bat -u
 echo.
-
-set /p OPEN_BROWSER=  Open this page in browser now? [y/N]: 
-if /i "!OPEN_BROWSER!"=="y" start https://!SERVER_DNS!
 
 goto end
 
@@ -499,12 +583,16 @@ echo.
 echo   --- Removing: !R_IP! !R_DNS! ---
 
 :: Remove from hosts
-powershell -NoProfile -Command "$p = 'C:\Windows\System32\drivers\etc\hosts'; if (Test-Path $p) { $lines = Get-Content $p; $new = $lines | Where-Object { $_ -notmatch '!R_DNS!' -and $_ -notmatch 'Anycert Server \[!R_IP!\]' }; [System.IO.File]::WriteAllLines($p, $new) }" >nul 2>&1
+if exist "!HOSTS_FILE!" (
+    findstr /v /i /c:"!R_DNS!" /c:"Anycert Server [!R_IP!]" "!HOSTS_FILE!" > "%temp%\hosts.tmp" 2>nul
+    copy /y "%temp%\hosts.tmp" "!HOSTS_FILE!" >nul
+    del "%temp%\hosts.tmp"
+)
 echo   [OK] Removed hosts entry: !R_DNS!
 
 :: Remove cert by THUMBPRINT
 if not "!R_THUMB!"=="" (
-    powershell -NoProfile -Command "& { $s = [System.Security.Cryptography.X509Certificates.StoreName]::Root; $l = [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine; $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($s,$l); $store.Open('ReadWrite'); $certs = $store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,'!R_THUMB!',$false); foreach($c in $certs){$store.Remove($c)}; $store.Close() }" >nul 2>&1
+    certutil -delstore Root "!R_THUMB!" >nul 2>&1
     if !errorlevel! equ 0 (
         echo   [OK] Removed CA certificate from system trust store.
     ) else (
@@ -548,6 +636,20 @@ endlocal
 exit /b 0
 
 :: ============================================================
+::  Helper: right-pad %1 to width %2 (sets PADDED)
+:: ============================================================
+:pad
+set "pad_s=%~1"
+set "pad_w=%~2"
+:pad_loop
+if not "!pad_s:~%pad_w%!"=="" goto :pad_done
+set "pad_s=!pad_s! "
+goto :pad_loop
+:pad_done
+set "PADDED=!pad_s!"
+goto :eof
+
+:: ============================================================
 ::  OFFLINE IMPORT SUBROUTINE
 :: ============================================================
 :offline_mode
@@ -585,9 +687,13 @@ set CA_LOCAL=!DATA_DIR!\anycert-ca-!SERVER_IP!.crt
 copy /y "!OFFLINE_CA!" "!CA_LOCAL!" >nul
 
 :: Get cert thumbprint
-set CERT_THUMB=
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 '!CA_LOCAL!').Thumbprint"`) do (
-    if "!CERT_THUMB!"=="" set CERT_THUMB=%%T
+set "CERT_THUMB="
+for /f "skip=1 delims=" %%A in ('certutil -hashfile "%CA_LOCAL%" SHA1 2^>nul') do (
+    if not defined CERT_THUMB (
+        set "HASH=%%A"
+        set "HASH=!HASH: =!"
+        set "CERT_THUMB=!HASH!"
+    )
 )
 
 :: Save site info: IP DNS THUMBPRINT

@@ -12,8 +12,10 @@ chcp 65001 >nul 2>&1
 
 title Anycert Windows Server Certificate Generator
 
-:: Define ANSI colors
-for /F "delims=" %%A in ('powershell -NoProfile -Command "[char]27"') do set "ESC=%%A"
+:: Define ANSI colors (fully PowerShell-free and locale-safe)
+echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs"
+for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs"') do set "ESC=%%A"
+if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs"
 set "YELLOW=!ESC![1;33m"
 set "CYAN=!ESC![1;36m"
 set "BLUE=!ESC![1;34m"
@@ -28,6 +30,16 @@ echo !BLUE!██║  ██║██║ ╚████║   ██║   ╚█
 echo !BLUE!╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝╚══════╝╚═╝  ╚═╝   ╚═╝   !RESET!
 echo !CYAN!                      anycert.bat (Windows Server) !RESET!
 echo.
+echo   Purpose:
+echo     Automatically detects the local IP and FQDN, generates a
+echo     10-year self-signed Root CA and server certificate, and
+echo     installs it into the selected self-hosted service (e.g. Nginx).
+echo     Lets browsers connect securely over the LAN with a trusted lock icon.
+echo.
+echo   Usage:
+echo     anycert.bat        # Install certificate
+echo     anycert.bat -u     # Uninstall and restore backups
+echo.
 
 :: ── Check Administrator privileges ──────────────────────────
 net session >nul 2>&1
@@ -35,7 +47,10 @@ if %errorlevel% neq 0 (
     echo [INFO] This script requires Administrator privileges.
     set /p ELEVATE_CONFIRM=  Would you like to elevate to Administrator now? [y/N]: 
     if /i "!ELEVATE_CONFIRM!"=="y" (
-        powershell -NoProfile -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~dp0%~nx0\"\" %*' -Verb RunAs"
+        echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
+        echo UAC.ShellExecute "cmd.exe", "/c ""%~dp0%~nx0"" %*", "", "runas", 1 >> "%temp%\getadmin.vbs"
+        "%temp%\getadmin.vbs"
+        del "%temp%\getadmin.vbs"
         exit /b 0
     )
     echo [ERROR] Administrator privileges are required to run this script.
@@ -44,127 +59,40 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: ── Paths ───────────────────────────────────────────────────
-set CONF_DIR=C:\anycert
-if not exist "!CONF_DIR!" mkdir "!CONF_DIR!"
-set CONF_FILE=!CONF_DIR!\anycert.conf
-set CA_KEY=!CONF_DIR!\anycert-ca.key
-set CA_CRT=!CONF_DIR!\anycert-ca.crt
-set CA_SRL=!CONF_DIR!\anycert-ca.srl
-set SERVER_KEY=!CONF_DIR!\anycert-server.key
-set SERVER_CRT=!CONF_DIR!\anycert-server.crt
-
-if /i "%~1"=="-u" goto do_uninstall
-
-:: Load existing configurations if present
-if exist "!CONF_FILE!" (
-    for /f "usebackq delims=" %%A in ("!CONF_FILE!") do set %%A
-)
-
-:: ── Check existing certificate ──────────────────────────────
-if exist "!SERVER_CRT!" (
-    echo An existing certificate setup is detected.
-    echo -----------------------------------------------------
-    for /f "usebackq delims=" %%S in (`powershell -NoProfile -Command "(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 '!SERVER_CRT!').Subject"`) do set "CERT_SUBJ=%%S"
-    for /f "usebackq" %%D in (`powershell -NoProfile -Command "[math]::Round(((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 '!SERVER_CRT!').NotAfter - (Get-Date)).TotalDays)"`) do set "DAYS_LEFT=%%D"
-    
-    echo   Subject/FQDN : !CERT_SUBJ!
-    echo   Days Left    : !DAYS_LEFT! days
-    echo   Current Profile : !PROFILE!
-    if "!PROFILE!"=="nginx_proxy" (
-        echo   Current Mapped Ports : !PROXY_PORTS!
-    )
-    echo.
-    if !DAYS_LEFT! lss 30 (
-        echo   !YELLOW![WARN] This certificate is expiring soon ^(!DAYS_LEFT! days left^)^!!RESET!
-        echo.
-    )
-    
-    echo Please choose an action:
-    if "!PROFILE!"=="nginx_proxy" (
-        echo   [1] Update/Modify Nginx port mappings
-    ) else (
-        echo   [1] Update/Modify Nginx port mappings (Switch to Nginx SSL Proxy)
-    )
-    echo   [2] Renew/Regenerate the SSL certificate
-    echo   [3] Uninstall and restore original settings
-    echo   [4] Keep existing and exit
-    echo.
-    
-    :exist_action_loop
-    set EXIST_ACTION=
-    set /p EXIST_ACTION=  Please choose [1-4]: 
-    if "!EXIST_ACTION!"=="1" goto do_update_ports
-    if "!EXIST_ACTION!"=="2" goto do_renew_cert
-    if "!EXIST_ACTION!"=="3" goto do_uninstall
-    if "!EXIST_ACTION!"=="4" (
-        echo Keeping existing settings. Exiting...
-        pause
-        exit /b 0
-    )
-    goto exist_action_loop
-
-    :do_update_ports
-    echo.
-    echo [Update Nginx Port Mappings]
-    echo -----------------------------------------------------
-    echo   Current proxy ports: !PROXY_PORTS!
-    echo   Rules:
-    echo     - To overwrite: Enter list of ports [e.g. 3000 8080]
-    echo     - To adjust   : Use + to add, - to remove [e.g. +8080 -3000]
-    echo.
-    set /p NEW_PROXY_PORTS=  Enter new HTTP ports to wrap in SSL: 
-    if not "!NEW_PROXY_PORTS!"=="" (
-        call :process_port_adjustments
-    )
-    set PROFILE=nginx_proxy
-    set ONLY_UPDATE_PORTS=1
-    goto do_deploy_nginx_proxy
-
-    :do_renew_cert
-    echo.
-    echo [Renewing Certificate] Keep current port configurations and regenerate files...
-    echo.
-)
-
-
-:: ============================================================
-::  INSTALL MODE
-:: ============================================================
-
-:: ── Find OpenSSL ─────────────────────────────────────────────
+:: ── Find OpenSSL (now moved to the top) ─────────────────────────
 set OPENSSL_BIN=
 where openssl >nul 2>&1
 if %errorlevel% equ 0 (
     set OPENSSL_BIN=openssl
     goto openssl_ok
 )
-
-:: Check Git for Windows path
-if exist "C:\Program Files\Git\usr\bin\openssl.exe" (
-    set OPENSSL_BIN="C:\Program Files\Git\usr\bin\openssl.exe"
+if exist "C:\PROGRA~1\Git\usr\bin\openssl.exe" (
+    set OPENSSL_BIN=C:\PROGRA~1\Git\usr\bin\openssl.exe
     goto openssl_ok
 )
-if exist "C:\Program Files (x86)\Git\usr\bin\openssl.exe" (
-    set OPENSSL_BIN="C:\Program Files (x86)\Git\usr\bin\openssl.exe"
+if exist "C:\PROGRA~2\Git\usr\bin\openssl.exe" (
+    set OPENSSL_BIN=C:\PROGRA~2\Git\usr\bin\openssl.exe
     goto openssl_ok
 )
-
 echo [WARN] openssl executable not found!
 echo We can automatically install Git for Windows (built-in OpenSSL) via winget.
 set /p INSTALL_GIT=  Do you want to automatically install Git? [y/N]: 
 if /i "!INSTALL_GIT!"=="y" (
     echo Installing Git for Windows via winget. Please allow installation in the UAC popup...
     winget install -e --id Git.Git
-    if !errorlevel! equ 0 (
+    if not errorlevel 1 (
         echo   [OK] Git installation complete! Refreshing path...
-        if exist "C:\Program Files\Git\usr\bin\openssl.exe" (
-            set OPENSSL_BIN="C:\Program Files\Git\usr\bin\openssl.exe"
+        where openssl >nul 2>&1
+        if not errorlevel 1 (
+            set OPENSSL_BIN=openssl
             goto openssl_ok
         )
-        where openssl >nul 2>&1
-        if !errorlevel! equ 0 (
-            set OPENSSL_BIN=openssl
+        if exist "C:\PROGRA~1\Git\usr\bin\openssl.exe" (
+            set OPENSSL_BIN=C:\PROGRA~1\Git\usr\bin\openssl.exe
+            goto openssl_ok
+        )
+        if exist "C:\PROGRA~2\Git\usr\bin\openssl.exe" (
+            set OPENSSL_BIN=C:\PROGRA~2\Git\usr\bin\openssl.exe
             goto openssl_ok
         )
         echo   [WARN] Installation complete, but openssl.exe still cannot be loaded directly.
@@ -175,7 +103,6 @@ if /i "!INSTALL_GIT!"=="y" (
         echo   [ERROR] winget installation failed. Please install Git manually.
     )
 )
-
 echo [ERROR] openssl executable not found!
 echo Please install Git for Windows or OpenSSL for Windows first.
 echo.
@@ -183,24 +110,159 @@ pause
 exit /b 1
 
 :openssl_ok
+
+:: ── Paths ───────────────────────────────────────────────────
+set CONF_DIR=C:\anycert
+if not exist "!CONF_DIR!" mkdir "!CONF_DIR!"
+set CONF_FILE=!CONF_DIR!\anycert.conf
+set CA_KEY=!CONF_DIR!\anycert-ca.key
+set CA_CRT=!CONF_DIR!\anycert-ca.crt
+set CA_SRL=!CONF_DIR!\anycert-ca.srl
+set SERVER_KEY=!CONF_DIR!\anycert-server.key
+set SERVER_CRT=!CONF_DIR!\anycert-server.crt
+set PORT_OFFSET=10000
+
+if /i "%~1"=="-u" goto do_uninstall
+
+:: Load existing configurations if present
+if exist "!CONF_FILE!" (
+    for /f "usebackq delims=" %%A in ("!CONF_FILE!") do set %%A
+)
+call :sanitize_proxyports
+
+:: ── Check existing certificate ──────────────────────────────
+if not exist "!SERVER_CRT!" goto after_existing_check
+
+echo An existing certificate setup is detected.
+echo -----------------------------------------------------
+set "CERT_SUBJ="
+for /f "tokens=2 delims==" %%S in ('!OPENSSL_BIN! x509 -noout -subject -in "!SERVER_CRT!"') do set "CERT_SUBJ=%%S"
+set "CERT_ENDDATE="
+for /f "tokens=2 delims==" %%D in ('!OPENSSL_BIN! x509 -noout -enddate -in "!SERVER_CRT!"') do set "CERT_ENDDATE=%%D"
+!OPENSSL_BIN! x509 -checkend 2592000 -noout -in "!SERVER_CRT!" >nul 2>&1
+if !errorlevel! neq 0 (
+    set "CERT_STATUS=Expiring soon or expired"
+) else (
+    set "CERT_STATUS=Valid"
+)
+
+echo   Subject/FQDN : !CERT_SUBJ!
+echo   Expiry Date  : !CERT_ENDDATE! (!CERT_STATUS!)
+echo   Current Profile : !PROFILE!
+if "!PROFILE!"=="nginx_proxy" (
+    echo   Current Mapped Ports : !PROXY_PORTS!
+    echo   Current HTTPS Offset: !PORT_OFFSET!
+)
+echo.
+if "!CERT_STATUS!"=="Expiring soon or expired" (
+    echo   !YELLOW![WARN] This certificate is expiring soon or has expired!!RESET!
+    echo.
+)
+
+echo Please choose an action:
+if "!PROFILE!"=="nginx_proxy" (
+    echo   [1] Update/Modify Nginx port mappings
+) else (
+    echo   [1] Update/Modify Nginx port mappings (Switch to Nginx SSL Proxy)
+)
+echo   [2] Renew/Regenerate the SSL certificate
+echo   [3] Uninstall and restore original settings
+echo   [4] Keep existing and exit
+echo.
+
+:exist_action_loop
+set EXIST_ACTION=
+set /p EXIST_ACTION=  Please choose [1-4]: 
+if "!EXIST_ACTION!"=="1" goto do_update_ports
+if "!EXIST_ACTION!"=="2" goto do_renew_cert
+if "!EXIST_ACTION!"=="3" goto do_uninstall
+if "!EXIST_ACTION!"=="4" (
+    echo Keeping existing settings. Exiting...
+    pause
+    exit /b 0
+)
+goto exist_action_loop
+
+:do_update_ports
+echo.
+echo [Update Nginx Port Mappings]
+echo -----------------------------------------------------
+echo   Current proxy ports: !PROXY_PORTS!
+echo.
+echo   Quick guide:
+echo     - To overwrite all: just type the new list, like: 3000 8080
+echo     - To add more: put + in front, like: +8080 +9090
+echo     - To remove: put - in front, like: -3000
+echo.
+    set /p NEW_PROXY_PORTS=  What ports should I wrap in SSL now? 
+    if not "!NEW_PROXY_PORTS!"=="" (
+        call :process_port_adjustments
+    )
+    call :sanitize_proxyports
+    set PROFILE=nginx_proxy
+set ONLY_UPDATE_PORTS=1
+goto do_deploy_nginx_proxy
+
+:do_renew_cert
+echo.
+echo [Renewing Certificate] Keep current port configurations and regenerate files...
+echo.
+set ONLY_RENEW=1
+
+:after_existing_check
+
+:: ============================================================
+::  INSTALL MODE
+:: ============================================================
+
+
 :: ── Detect network info ──────────────────────────────────────
 echo [1/6] Auto-detecting network configurations...
 echo -----------------------------------------------------
 
-:: Detect IP using PowerShell
+:: Detect IP using native ipconfig (fully PowerShell-free)
 set SERVER_IP=
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.InterfaceAlias -notlike '*Loopback*' -and $_.InterfaceAlias -notlike '*vEthernet*' -and $_.InterfaceAlias -notlike '*WSL*' -and $_.InterfaceAlias -notlike '*Tailscale*' -and $_.InterfaceAlias -notlike '*VirtualBox*' -and $_.InterfaceAlias -notlike '*VMware*' } | Select-Object -First 1).IPAddress"`) do (
-    set SERVER_IP=%%A
+set SKIP_ADAPTER=0
+for /f "usebackq delims=" %%L in (`ipconfig`) do (
+    set "LINE=%%L"
+    :: Check if line starts an adapter section (supports English and Chinese Windows)
+    echo !LINE! | findstr /i "adapter 卡" >nul
+    if not errorlevel 1 (
+        set "SKIP_ADAPTER=0"
+        :: Filter out virtual adapters
+        for %%V in (VMware VirtualBox vEthernet WSL Tailscale Loopback Pseudo) do (
+            echo !LINE! | findstr /i "%%V" >nul
+            if not errorlevel 1 set "SKIP_ADAPTER=1"
+        )
+    )
+    if "!SKIP_ADAPTER!"=="0" (
+        echo !LINE! | findstr /i "IPv4" >nul
+        if not errorlevel 1 (
+            for /f "tokens=2 delims=:" %%A in ("!LINE!") do (
+                set "TEMP_IP=%%A"
+                set "TEMP_IP=!TEMP_IP: =!"
+                for /f "delims=" %%I in ("!TEMP_IP!") do set "SERVER_IP=%%I"
+            )
+        )
+    )
 )
 if "!SERVER_IP!"=="" set SERVER_IP=127.0.0.1
 
-:: Detect Hostname & FQDN
+:: Detect Hostname & FQDN using registry (fully PowerShell-free)
 set SERVER_HOSTNAME=%COMPUTERNAME%
 set SERVER_FQDN=
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry('').HostName"`) do (
-    set SERVER_FQDN=%%A
+set REG_DOM=
+set REG_NV_DOM=
+for /f "tokens=3" %%A in ('REG QUERY "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" /v "Domain" 2^>nul') do set "REG_DOM=%%A"
+for /f "tokens=3" %%A in ('REG QUERY "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" /v "NV Domain" 2^>nul') do set "REG_NV_DOM=%%A"
+
+if not "!REG_DOM!"=="" (
+    set SERVER_FQDN=!SERVER_HOSTNAME!.!REG_DOM!
+) else if not "!REG_NV_DOM!"=="" (
+    set SERVER_FQDN=!SERVER_HOSTNAME!.!REG_NV_DOM!
+) else (
+    set SERVER_FQDN=!SERVER_HOSTNAME!
 )
-if "!SERVER_FQDN!"=="" set SERVER_FQDN=!SERVER_HOSTNAME!.local
 
 echo   Auto-detection results:
 echo   Server IP Address: !SERVER_IP!
@@ -213,20 +275,23 @@ echo [2/6] Please confirm or modify the detected information
 echo -----------------------------------------------------
 set /p INPUT_IP=  Server IP Address [!SERVER_IP!]: 
 if not "!INPUT_IP!"=="" set SERVER_IP=!INPUT_IP!
+echo   (Tip: you can enter additional IPs e.g. Tailscale/VPN IPs)
+set /p EXTRA_IPS=  Additional IP Addresses (optional, space-separated): 
 
 set /p INPUT_FQDN=  Server DNS Name (FQDN) [!SERVER_FQDN!]: 
 if not "!INPUT_FQDN!"=="" set SERVER_FQDN=!INPUT_FQDN!
 echo.
 
 :: ── Choose profile ──────────────────────────────────────────
+if "!ONLY_RENEW!"=="1" goto renew_skip_profile
 echo [3/6] Please choose the Service Profile to apply
 echo -----------------------------------------------------
 echo   [1] Auto-Setup Nginx SSL Proxy (Port-Offset Wrapper) [Lazy-Friendly / Recommended]
 echo       - Installs Nginx and automatically wraps your HTTP ports in SSL
-echo       - Keeps your existing apps running on HTTP, proxies to SSL Port + 10000
+echo       - Keeps your existing apps running on HTTP, proxies to SSL Port + 10000 (configurable)
 echo.
 echo   [2] Custom Path (Auto-Deploy)
-echo       - Copies certificates to your service folders (e.g. IIS, Nginx, Apache, Emby, Plex, Docker)
+echo       - Copies certificates to your service folders (e.g. IIS, Nginx, Apache, Emby, Plex, Docker, etc.)
 echo       - Can automatically run a reload command to apply changes
 echo.
 echo   [3] Generate Only (Manual Deploy) [Painful / Hard Way]
@@ -257,6 +322,17 @@ if "!PROFILE!"=="custom" goto do_profile_custom
 if "!PROFILE!"=="nginx_proxy" goto do_profile_nginx_proxy
 goto do_ask_proceed
 
+:renew_skip_profile
+echo [3/6] Reusing existing Service Profile: !PROFILE!
+echo -----------------------------------------------------
+if "!PROFILE!"=="nginx_proxy" echo   Nginx SSL Proxy ports: !PROXY_PORTS! ^(HTTPS offset: !PORT_OFFSET!^)
+if "!PROFILE!"=="custom" (
+    echo   Custom CRT: !CUSTOM_CERT!
+    echo   Custom KEY: !CUSTOM_KEY!
+)
+echo.
+goto do_ask_proceed
+
 :do_profile_custom
 echo.
 echo   [Custom Path Settings]
@@ -280,9 +356,78 @@ goto do_ask_proceed
 echo.
 echo   [Automated Nginx SSL Proxy Settings]
 
-:: Detect active local TCP ports
+:: Precompute example values for display (based on default/current offset)
+set /a OFFSET_THRESHOLD=65536-!PORT_OFFSET!
+set /a OFFSET_EXAMPLE=3000+!PORT_OFFSET!
+set /a OFFSET_SUB=60000-!PORT_OFFSET!
+
+:: Detect active local TCP ports (probe HTTP only & sort)
+echo   Scanning local ports, please wait...
 set DETECTED_PORTS=
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "$ports = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue ^| Where-Object {$_.LocalPort -gt 80 -and $_.LocalPort -ne 135 -and $_.LocalPort -ne 445 -and $_.LocalPort -ne 5357} ^| Select-Object -ExpandProperty LocalPort ^| Sort-Object -Unique; $ports -join ' '"`) do set "DETECTED_PORTS=%%P"
+for /f "tokens=2" %%A in ('netstat -ano ^| findstr /i "listening"') do (
+    set "ADDR=%%A"
+    set "T=!ADDR!"
+    set "T=!T::= !"
+    for %%P in (!T!) do set "CURR_P=%%P"
+    
+    :: Clean brackets just in case
+    set "CURR_P=!CURR_P:[=!"
+    set "CURR_P=!CURR_P:]=!"
+    
+    :: Basic numeric validation (ensure it is a number)
+    set "IS_NUM=1"
+    for /f "delims=0123456789" %%K in ("!CURR_P!") do set "IS_NUM=0"
+    
+    if "!IS_NUM!"=="1" (
+        if !CURR_P! gtr 80 (
+            if not "!CURR_P!"=="135" if not "!CURR_P!"=="445" if not "!CURR_P!"=="5357" (
+                set "PORT_EXISTS="
+                for %%D in (!DETECTED_PORTS!) do (
+                    if "%%D"=="!CURR_P!" set "PORT_EXISTS=1"
+                )
+                if not "!PORT_EXISTS!"=="1" (
+                    :: Probe if it is actually HTTP protocol
+                    set "IS_HTTP=0"
+                    for /f "usebackq" %%C in (`curl -s -w "%%{http_code}" -o nul --connect-timeout 0.2 --max-time 0.5 http://127.0.0.1:!CURR_P!`) do (
+                        set "HTTP_CODE=%%C"
+                        if not "!HTTP_CODE!"=="000" if not "!HTTP_CODE!"=="" set "IS_HTTP=1"
+                    )
+                    if "!IS_HTTP!"=="1" (
+                        set "DETECTED_PORTS=!DETECTED_PORTS! !CURR_P!"
+                    )
+                )
+            )
+        )
+    )
+)
+
+:: Bubble Sort the DETECTED_PORTS
+set "PORT_COUNT=0"
+for %%A in (!DETECTED_PORTS!) do (
+    set /a PORT_COUNT+=1
+    set "PORT_ARR_!PORT_COUNT!=%%A"
+)
+if !PORT_COUNT! gtr 1 (
+    set /a MAX_IDX=PORT_COUNT-1
+    for /l %%I in (1,1,!MAX_IDX!) do (
+        set /a NEXT_I=%%I+1
+        for /l %%J in (!NEXT_I!,1,!PORT_COUNT!) do (
+            if !PORT_ARR_%%I! gtr !PORT_ARR_%%J! (
+                set "TEMP=!PORT_ARR_%%I!"
+                set "PORT_ARR_%%I=!PORT_ARR_%%J!"
+                set "PORT_ARR_%%J=!TEMP!"
+            )
+        )
+    )
+)
+:: Rebuild sorted DETECTED_PORTS
+set "DETECTED_PORTS="
+for /l %%I in (1,1,!PORT_COUNT!) do (
+    set "DETECTED_PORTS=!DETECTED_PORTS! !PORT_ARR_%%I!"
+)
+if not "!DETECTED_PORTS!"=="" (
+    for /f "tokens=* delims= " %%A in ("!DETECTED_PORTS!") do set "DETECTED_PORTS=%%A"
+)
 
 set EXISTING_PORTS=
 if exist "!CONF_FILE!" (
@@ -295,14 +440,14 @@ if exist "!CONF_FILE!" (
 
 if "!EXISTING_PORTS!"=="" goto do_nginx_no_existing
 
-echo   Currently configured SSL proxy HTTP ports:
+echo   You already have these HTTP ports mapped:
 echo     !EXISTING_PORTS!
 echo.
-echo   Select an action:
-echo     [1] Keep existing ports [Default]
-echo     [2] Add new ports to the list
-echo     [3] Remove ports from the list
-echo     [4] Overwrite / Set a completely new list of ports
+echo   What do you want to do?
+echo     [1] Keep them as-is [Default]
+echo     [2] Add more ports
+echo     [3] Remove some ports
+echo     [4] Start over with a new list
 echo.
 
 :nginx_opt_loop
@@ -322,26 +467,46 @@ goto do_nginx_ports_decision_done
 
 :do_opt_add
 if not "!DETECTED_PORTS!"=="" (
-    echo   [INFO] Detected active local TCP ports: !DETECTED_PORTS!
+    echo   [TIP] I found these ports listening on your machine: !DETECTED_PORTS!
 )
-echo   Nginx will map new ports to "Port + 10000" under HTTPS [e.g. 3000 -^> 13000].
-echo   For ports ^>= 55536, it maps to "Port - 10000" [e.g. 60000 -^> 50000] to fit in TCP range [1-65535].
-set /p NEW_PORTS=  Enter new HTTP ports to add (space-separated): 
-for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "$ports = ('!EXISTING_PORTS! ' + '!NEW_PORTS!').Split(' ') ^| Where-Object {$_} ^| Select-Object -Unique; $ports -join ' '"`) do set "PROXY_PORTS=%%D"
+echo   I will add HTTPS access to each port you give me, on port ^(that port + !PORT_OFFSET!^).
+echo   For example: port 3000 will get a HTTPS wrapper on port !OFFSET_EXAMPLE!.
+echo   ^(If a port is too large, I subtract !PORT_OFFSET! instead, e.g. 60000 -> !OFFSET_SUB!.^)
+set /p NEW_PORTS=  Which extra ports do you want to expose via HTTPS? ^(space-separated^): 
+set "PROXY_PORTS=!EXISTING_PORTS!"
+for %%P in (!NEW_PORTS!) do (
+    set "PORT_EXISTS="
+    for %%D in (!PROXY_PORTS!) do (
+        if "%%D"=="%%P" set "PORT_EXISTS=1"
+    )
+    if not "!PORT_EXISTS!"=="1" (
+        set "PROXY_PORTS=!PROXY_PORTS! %%P"
+    )
+)
 goto do_nginx_ports_decision_done
 
 :do_opt_remove
 set /p REMOVE_PORTS=  Enter HTTP ports to remove (space-separated): 
-for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "$ports = ('!EXISTING_PORTS!').Split(' ') ^| Where-Object {$_}; $remove = ('!REMOVE_PORTS!').Split(' ') ^| Where-Object {$_}; $res = $ports ^| Where-Object { $remove -notcontains $_ }; $res -join ' '"`) do set "PROXY_PORTS=%%D"
+set "PROXY_PORTS="
+for %%P in (!EXISTING_PORTS!) do (
+    set "PORT_REMOVE="
+    for %%R in (!REMOVE_PORTS!) do (
+        if "%%R"=="%%P" set "PORT_REMOVE=1"
+    )
+    if not "!PORT_REMOVE!"=="1" (
+        set "PROXY_PORTS=!PROXY_PORTS! %%P"
+    )
+)
 goto do_nginx_ports_decision_done
 
 :do_opt_overwrite
 if not "!DETECTED_PORTS!"=="" (
-    echo   [INFO] Detected active local TCP ports: !DETECTED_PORTS!
+    echo   [TIP] I found these ports listening on your machine: !DETECTED_PORTS!
 )
-echo   Nginx will map these ports to "Port + 10000" under HTTPS [e.g. 3000 -^> 13000].
-echo   For ports ^>= 55536, it maps to "Port - 10000" [e.g. 60000 -^> 50000] to fit in TCP range [1-65535].
-set /p NEW_LIST=  Enter new list of HTTP ports (space-separated): 
+echo   I will add HTTPS access to each port you give me, on port ^(that port + !PORT_OFFSET!^).
+echo   For example: port 3000 will get a HTTPS wrapper on port !OFFSET_EXAMPLE!.
+echo   ^(If a port is too large, I subtract !PORT_OFFSET! instead, e.g. 60000 -> !OFFSET_SUB!.^)
+set /p NEW_LIST=  What ports do you want to expose via HTTPS? ^(space-separated^): 
 set "PROXY_PORTS=!NEW_LIST!"
 goto do_nginx_ports_decision_done
 
@@ -350,15 +515,32 @@ goto do_nginx_ports_done
 
 :do_nginx_no_existing
 if not "!DETECTED_PORTS!"=="" (
-    echo   [INFO] Detected active local TCP ports: !DETECTED_PORTS!
+    echo   [TIP] I found these ports listening on your machine: !DETECTED_PORTS!
 )
-echo   Enter the HTTP ports of your local services to wrap in SSL.
-echo   Nginx will map these to "Port + 10000" under HTTPS [e.g. 3000 -^> 13000].
-echo   For ports ^>= 55536, it maps to "Port - 10000" [e.g. 60000 -^> 50000] to fit in TCP range [1-65535].
-echo   Separate multiple ports with spaces [e.g. 3000 6000 11434].
-set /p PROXY_PORTS=  Enter ports: 
+echo   Tell me which of your local services should be accessible via HTTPS.
+echo   I will add a secure HTTPS wrapper on port ^(your_port + !PORT_OFFSET!^).
+echo   For example: if you have a service on port 3000, I will make it available
+echo   on https://localhost:!OFFSET_EXAMPLE! ^(3000 + !PORT_OFFSET!^).
+echo   ^(For high ports ^>= !OFFSET_THRESHOLD! I subtract !PORT_OFFSET! instead.^)
+echo   Type the ports separated by spaces, like: 3000 6000 11434
+set /p PROXY_PORTS=  Which local HTTP services should get HTTPS access? ^(space-separated^): 
 
 :do_nginx_ports_done
+call :sanitize_proxyports
+
+:: ── HTTPS port offset (user customizable, default 10000) ──
+echo.
+echo   HTTPS ^(SSL^) port offset: HTTPS port = HTTP port + offset.
+echo   Default is !PORT_OFFSET! ^(the HTTPS port for 3000 is !OFFSET_EXAMPLE!^).
+set /p INPUT_OFFSET=  Enter HTTPS port offset [default: !PORT_OFFSET!]: 
+if "!INPUT_OFFSET!"=="" set INPUT_OFFSET=!PORT_OFFSET!
+set /a PORT_OFFSET=!INPUT_OFFSET! 2>nul
+if !PORT_OFFSET! lss 1 set PORT_OFFSET=10000
+if !PORT_OFFSET! gtr 65535 set PORT_OFFSET=10000
+set /a OFFSET_THRESHOLD=65536-!PORT_OFFSET!
+set /a OFFSET_EXAMPLE=3000+!PORT_OFFSET!
+set /a OFFSET_SUB=60000-!PORT_OFFSET!
+echo.
 
 if "!PROXY_PORTS!"=="" (
     echo [ERROR] You must specify at least one port for proxying!
@@ -384,7 +566,7 @@ if "!PROFILE!"=="custom" (
     if not "!RELOAD_CMD!"=="" echo   4. Run reload command: !RELOAD_CMD!
 ) else if "!PROFILE!"=="nginx_proxy" (
     echo   3. Install Nginx if missing, and configure it as an SSL wrapper for ports:
-    echo      !PROXY_PORTS! (SSL ports: Original + 10000)
+    echo      !PROXY_PORTS! ^(SSL ports: Original + !PORT_OFFSET!^)
     echo   4. Start or reload Nginx to apply changes
 ) else (
     echo   3. Store files in !CONF_DIR!\ only, without applying to any service
@@ -426,8 +608,23 @@ set SAN_CONF=!CONF_DIR!\san.conf
 !OPENSSL_BIN! genrsa -out "!SERVER_KEY!" 2048 >nul 2>&1
 !OPENSSL_BIN! req -new -key "!SERVER_KEY!" -out "!SERVER_CSR!" -subj "/CN=!SERVER_FQDN!" >nul 2>&1
 
+:: Build SAN IP list (primary + extra IPs)
+set SAN_IPS=IP:!SERVER_IP!,IP:127.0.0.1
+set EXTRA_IPS_REMAIN=!EXTRA_IPS!
+:san_extra_loop
+if "!EXTRA_IPS_REMAIN!"=="" goto san_extra_done
+for /f "tokens=1*" %%A in ("!EXTRA_IPS_REMAIN!") do (
+    set SAN_ONE=%%A
+    set EXTRA_IPS_REMAIN=%%B
+)
+if "!SAN_ONE!"=="!SERVER_IP!" goto san_extra_loop
+if "!SAN_ONE!"=="127.0.0.1" goto san_extra_loop
+set SAN_IPS=!SAN_IPS!,IP:!SAN_ONE!
+goto san_extra_loop
+:san_extra_done
+
 (
-echo subjectAltName=DNS:!SERVER_FQDN!,IP:!SERVER_IP!
+echo subjectAltName=DNS:!SERVER_FQDN!,DNS:localhost,!SAN_IPS!
 echo basicConstraints=CA:FALSE
 echo keyUsage=digitalSignature,keyEncipherment
 echo extendedKeyUsage=serverAuth
@@ -443,8 +640,10 @@ echo   [OK] Server certificate issued successfully: !SERVER_CRT!
 echo.
 
 :: ── Install Cert ────────────────────────────────────────────
-:: Generate timestamp for backup (WMIC is deprecated/missing in modern Windows)
-for /f "usebackq" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'yyyyMMddHHmmss'"`) do set "TS=%%T"
+:: Generate timestamp for backup (fully PowerShell-free)
+echo WScript.Echo Year^(Now^)^&Right^("0"^&Month^(Now^),2^)^&Right^("0"^&Day^(Now^),2^)^&Right^("0"^&Hour^(Now^),2^)^&Right^("0"^&Minute^(Now^),2^)^&Right^("0"^&Second^(Now^),2^) > "%temp%\getts.vbs"
+for /f %%T in ('C:\Windows\System32\cscript.exe //nologo "%temp%\getts.vbs"') do set "TS=%%T"
+if exist "%temp%\getts.vbs" del "%temp%\getts.vbs"
 
 if "!PROFILE!"=="custom" goto do_deploy_custom
 if "!PROFILE!"=="nginx_proxy" goto do_deploy_nginx_proxy
@@ -465,12 +664,23 @@ echo   [OK] Certificate copied to: !CUSTOM_CERT!
 echo   [OK] Private key copied to: !CUSTOM_KEY!
 
 if not "!RELOAD_CMD!"=="" (
-    echo   Executing service reload command: !RELOAD_CMD!
-    cmd /c "!RELOAD_CMD!"
-    if !errorlevel! equ 0 (
-        echo   [OK] Reload command executed successfully!
-    ) else (
-        echo   [WARN] Reload command failed. Please check the service status.
+    set RUN_RELOAD=1
+    echo !RELOAD_CMD! | findstr /i "nginx" >nul
+    if not errorlevel 1 (
+        if not exist "C:\nginx\nginx.exe" (
+            echo   [WARN] The reload command references nginx, but nginx was not found at C:\nginx\nginx.exe.
+            echo   [WARN] Skipping reload command. Please install Nginx first or correct the command.
+            set RUN_RELOAD=0
+        )
+    )
+    if !RUN_RELOAD! equ 1 (
+        echo   Executing service reload command: !RELOAD_CMD!
+        cmd /c "!RELOAD_CMD!"
+        if not errorlevel 1 (
+            echo   [OK] Reload command executed successfully!
+        ) else (
+            echo   [WARN] Reload command failed. Please check the service status.
+        )
     )
 )
 echo.
@@ -480,18 +690,67 @@ goto do_post_install
 echo Deploying and configuring Nginx Reverse Proxy...
 echo -----------------------------------------------------
 
-:: Install Nginx if not exists at C:\nginx
-if not exist "C:\nginx\nginx.exe" (
-    echo   [INFO] Nginx not found at C:\nginx. Downloading and installing...
-    powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://nginx.org/download/nginx-1.26.1.zip' -OutFile '!CONF_DIR!\nginx.zip'"
-    powershell -NoProfile -Command "Expand-Archive -Path '!CONF_DIR!\nginx.zip' -DestinationPath '!CONF_DIR!'"
-    move "!CONF_DIR!\nginx-1.26.1" "C:\nginx" >nul 2>&1
-    del "!CONF_DIR!\nginx.zip" >nul 2>&1
-    echo   [OK] Nginx installed successfully to C:\nginx!
+:: Check/Install Nginx
+set "NGINX_DIR=C:\nginx"
+if exist "C:\nginx\nginx.exe" (
+    echo   [INFO] Using existing Nginx at C:\nginx\
+    goto nginx_installed
 )
 
+echo   [INFO] Nginx not found at C:\nginx\nginx.exe.
+echo          Automatically downloading Nginx 1.26.1 stable zip...
+curl.exe -L -o "!CONF_DIR!\nginx.zip" "https://nginx.org/download/nginx-1.26.1.zip"
+if %errorlevel% neq 0 goto nginx_download_fail
+
+echo   Extracting Nginx...
+pushd "!CONF_DIR!"
+    C:\Windows\System32\tar.exe -xf nginx.zip
+popd
+if not exist "!CONF_DIR!\nginx-1.26.1" goto nginx_extract_fail
+
+if exist "C:\nginx" rd /s /q "C:\nginx" >nul 2>&1
+move "!CONF_DIR!\nginx-1.26.1" "C:\nginx" >nul 2>&1
+if not exist "C:\nginx\nginx.exe" goto nginx_move_fail
+
+echo   [OK] Nginx successfully installed to C:\nginx!
+del "!CONF_DIR!\nginx.zip" >nul 2>&1
+goto nginx_installed
+
+:nginx_download_fail
+echo   [ERROR] Failed to download Nginx zip.
+goto nginx_fail_common
+
+:nginx_extract_fail
+echo   [ERROR] Failed to find extracted Nginx files.
+goto nginx_fail_common
+
+:nginx_move_fail
+echo   [ERROR] Failed to move Nginx files to C:\nginx.
+goto nginx_fail_common
+
+:nginx_fail_common
+echo          If this is an offline environment, please manually download Nginx from:
+echo            https://nginx.org/en/download.html
+echo          And extract it so that C:\nginx\nginx.exe exists, then run this script again.
+pause
+exit /b 1
+
+:nginx_installed
+
+
 :: Create clean config
-set NGINX_CONF=C:\nginx\conf\nginx.conf
+if not exist "!NGINX_DIR!\conf" mkdir "!NGINX_DIR!\conf" >nul 2>&1
+set NGINX_CONF=!NGINX_DIR!\conf\nginx.conf
+
+:: Build Nginx server_name list (FQDN + primary IP + extra IPs + localhost)
+set NGINX_SERVER_NAMES=!SERVER_FQDN! !SERVER_IP!
+for %%E in (!EXTRA_IPS!) do (
+    if not "%%E"=="!SERVER_IP!" if not "%%E"=="127.0.0.1" (
+        set NGINX_SERVER_NAMES=!NGINX_SERVER_NAMES! %%E
+    )
+)
+set NGINX_SERVER_NAMES=!NGINX_SERVER_NAMES! localhost 127.0.0.1
+
 (
 echo worker_processes  1;
 echo.
@@ -508,7 +767,7 @@ echo.
 echo     # Standard HTTP Server
 echo     server {
 echo         listen       80;
-echo         server_name  !SERVER_FQDN!;
+echo         server_name  !NGINX_SERVER_NAMES!;
 echo         location / {
 echo             root   html;
 echo             index  index.html index.htm;
@@ -531,17 +790,19 @@ echo.
 echo     # SSL Wrapper for Port !CURR_PORT! -^> !SSL_P!
 echo     server {
 echo         listen       !SSL_P! ssl;
-echo         server_name  !SERVER_FQDN!;
+echo         server_name  !NGINX_SERVER_NAMES!;
 echo.
 echo         ssl_certificate      C:/anycert/anycert-server.crt;
 echo         ssl_certificate_key  C:/anycert/anycert-server.key;
 echo.
 echo         location / {
 echo             proxy_pass http://127.0.0.1:!CURR_PORT!;
-echo             proxy_set_header Host localhost;
+echo             proxy_set_header Host $http_host;
 echo             proxy_set_header X-Real-IP $remote_addr;
+echo             proxy_redirect http:// https://;
 echo             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 echo             proxy_set_header X-Forwarded-Proto $scheme;
+echo             proxy_set_header X-Forwarded-Port $server_port;
 echo             proxy_set_header Upgrade $http_upgrade;
 echo             proxy_set_header Connection "upgrade";
 echo         }
@@ -550,33 +811,44 @@ echo     }
 goto nginx_write_loop
 :nginx_write_done
 
-    
-    :: Close http block
-    echo } >> "!NGINX_CONF!"
-    echo   [OK] Nginx configuration written successfully: !NGINX_CONF!
-    
-    :: Start or reload Nginx
-    tasklist | findstr /i "nginx.exe" >nul
-    if !errorlevel! neq 0 (
-        echo   Starting Nginx daemon...
-        cd /d C:\nginx
-        start nginx
-        echo   [OK] Nginx daemon started successfully!
-    ) else (
-        echo   Reloading Nginx configuration...
-        cd /d C:\nginx
-        nginx -s reload >nul 2>&1
-        echo   [OK] Nginx configuration reloaded successfully!
-    )
-    echo.
-    if "!ONLY_UPDATE_PORTS!"=="1" goto do_save_and_summary
+:: Close http block
+echo } >> "!NGINX_CONF!"
+echo   [OK] Nginx configuration written successfully: !NGINX_CONF!
+
+:: Test configuration first
+echo   Testing Nginx configuration...
+cd /d "!NGINX_DIR!"
+.\nginx.exe -t >nul 2>&1
+if errorlevel 1 (
+    echo   [ERROR] Nginx configuration test failed! Please check:
+    .\nginx.exe -t
+    pause
+    exit /b 1
 )
 
+:: Start or reload Nginx
+tasklist | findstr /i "nginx.exe" >nul
+if errorlevel 1 (
+    echo   Starting Nginx daemon...
+    cd /d "!NGINX_DIR!"
+    start nginx.exe
+    echo   [OK] Nginx daemon started successfully!
+) else (
+    echo   Reloading Nginx configuration...
+    cd /d "!NGINX_DIR!"
+    .\nginx.exe -s reload >nul 2>&1
+    echo   [OK] Nginx configuration reloaded successfully!
+)
+echo.
+if "!ONLY_UPDATE_PORTS!"=="1" goto do_save_and_summary
+
 :: ── Import CA locally ────────────────────────────────────────
-set /p LOCAL_TRUST=  Do you want to import this Root CA into this Windows Server's local system trust store? [y/N]: 
+:do_post_install
+echo   [INFO] Import this Root CA into this Windows Server's local system trust store for local browser access.
+set /p LOCAL_TRUST=  Do you want to import? [y/N]: 
 if /i "!LOCAL_TRUST!"=="y" (
     certutil -addstore -f "Root" "!CA_CRT!" >nul 2>&1
-    if !errorlevel! equ 0 (
+    if not errorlevel 1 (
         echo   [OK] CA certificate successfully imported to local system trust store!
     ) else (
         echo   [ERROR] Failed to import CA certificate to local trust store.
@@ -586,30 +858,42 @@ echo.
 
 :: ── Check & Enable OpenSSH Server (optional) ─────────────────
 set SSHD_STATUS=missing
-for /f "usebackq" %%S in (`powershell -NoProfile -Command "if (Get-Service sshd -ErrorAction SilentlyContinue) { if ((Get-Service sshd).Status -eq 'Running') { 'running' } else { 'stopped' } } else { 'missing' }"`) do set "SSHD_STATUS=%%S"
+sc query sshd >nul 2>&1
+if not errorlevel 1 set SSHD_STATUS=stopped
+sc query sshd 2>nul | findstr /i "RUNNING" >nul
+if not errorlevel 1 set SSHD_STATUS=running
 
-if "!SSHD_STATUS!"=="missing" (
-    echo [INFO] Windows built-in OpenSSH Server is not installed on this server.
-    echo        Enabling OpenSSH allows clients to automatically download the CA certificate via SCP.
-    set /p INSTALL_SSHD=  Do you want to automatically install and enable OpenSSH Server now? [y/N]: 
-    if /i "!INSTALL_SSHD!"=="y" (
-        echo   Installing OpenSSH Server via PowerShell...
-        powershell -NoProfile -Command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0" >nul 2>&1
-        powershell -NoProfile -Command "Start-Service sshd; Set-Service -Name sshd -StartupType 'Automatic'" >nul 2>&1
-        netsh advfirewall firewall add rule name="OpenSSH SSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 >nul 2>&1
-        echo   [OK] OpenSSH Server installed and started successfully!
-    )
-    echo.
-) else if "!SSHD_STATUS!"=="stopped" (
-    echo [INFO] Windows built-in OpenSSH Server is installed but not running.
-    set /p START_SSHD=  Do you want to start the OpenSSH service now and set it to automatic? [y/N]: 
-    if /i "!START_SSHD!"=="y" (
-        powershell -NoProfile -Command "Start-Service sshd; Set-Service -Name sshd -StartupType 'Automatic'" >nul 2>&1
-        netsh advfirewall firewall add rule name="OpenSSH SSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 >nul 2>&1
-        echo   [OK] OpenSSH Server started successfully!
-    )
-    echo.
-)
+if "!SSHD_STATUS!"=="missing" goto sshd_missing_flow
+if "!SSHD_STATUS!"=="stopped" goto sshd_stopped_flow
+goto after_sshd_flow
+
+:sshd_missing_flow
+echo [INFO] Windows built-in OpenSSH Server is not installed on this server.
+echo        Enabling OpenSSH allows clients to automatically download the CA certificate via SCP.
+set /p INSTALL_SSHD=  Do you want to automatically install and enable OpenSSH Server now? [y/N]: 
+if /i not "!INSTALL_SSHD!"=="y" goto after_sshd_flow
+
+echo   Installing OpenSSH Server via DISM (please wait)...
+dism /online /add-capability /capabilityname:OpenSSH.Server~~~~0.0.1.0 >nul 2>&1
+sc config sshd start= auto >nul 2>&1
+net start sshd >nul 2>&1
+netsh advfirewall firewall add rule name="OpenSSH SSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 >nul 2>&1
+echo   [OK] OpenSSH Server installed and started successfully!
+echo.
+goto after_sshd_flow
+
+:sshd_stopped_flow
+echo [INFO] Windows built-in OpenSSH Server is installed but not running.
+set /p START_SSHD=  Do you want to start the OpenSSH service now and set it to automatic? [y/N]: 
+if /i not "!START_SSHD!"=="y" goto after_sshd_flow
+
+sc config sshd start= auto >nul 2>&1
+net start sshd >nul 2>&1
+netsh advfirewall firewall add rule name="OpenSSH SSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 >nul 2>&1
+echo   [OK] OpenSSH Server started successfully!
+echo.
+
+:after_sshd_flow
 
 
 :do_save_and_summary
@@ -622,7 +906,38 @@ echo CUSTOM_CERT=!CUSTOM_CERT!
 echo CUSTOM_KEY=!CUSTOM_KEY!
 echo RELOAD_CMD=!RELOAD_CMD!
 echo PROXY_PORTS=!PROXY_PORTS!
+echo PORT_OFFSET=!PORT_OFFSET!
 ) > "!CONF_FILE!"
+
+:: ── Extract certificate details for summary ───────────────
+set "CRT_SUBJECT="
+set "CRT_ISSUER="
+set "CRT_START="
+set "CRT_END="
+set "CRT_FP="
+set "CRT_SAN="
+set "CA_START="
+set "CA_END="
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -subject 2^>nul') do set "CRT_SUBJECT=%%B"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -issuer 2^>nul') do set "CRT_ISSUER=%%B"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -startdate 2^>nul') do set "CRT_START=%%B"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -enddate 2^>nul') do set "CRT_END=%%B"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -fingerprint -sha256 2^>nul') do set "CRT_FP=%%B"
+for /f "tokens=* delims=" %%A in ('!OPENSSL_BIN! x509 -in !SERVER_CRT! -noout -ext subjectAltName 2^>nul ^| findstr /i "DNS:"') do set "CRT_SAN=%%A"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !CA_CRT! -noout -startdate 2^>nul') do set "CA_START=%%B"
+for /f "tokens=1* delims==" %%A in ('!OPENSSL_BIN! x509 -in !CA_CRT! -noout -enddate 2^>nul') do set "CA_END=%%B"
+for /f "tokens=*" %%S in ("!CRT_SAN!") do set "CRT_SAN=%%S"
+if "!CRT_SAN!"=="" set "CRT_SAN=N/A"
+
+:: Compute total validity in days from start/end dates
+call :date_to_days "!CRT_START!"
+set "START_JDN=!JDN!"
+call :date_to_days "!CRT_END!"
+set /a VALIDITY_DAYS=!JDN! - !START_JDN!
+call :date_to_days "!CA_START!"
+set "CA_START_JDN=!JDN!"
+call :date_to_days "!CA_END!"
+set /a CA_VALIDITY_DAYS=!JDN! - !CA_START_JDN!
 
 :: ── Show Summary ────────────────────────────────────────────
 echo =====================================================
@@ -630,9 +945,14 @@ echo   Certificate Setup Summary
 echo =====================================================
 echo.
 echo   [ Certificate Info ]
-echo   Subject FQDN:   !SERVER_FQDN!
-echo   Server IP:      !SERVER_IP!
-echo   Validity:       825 days (Root CA: 10 years)
+echo   Subject:               !CRT_SUBJECT!
+echo   Issuer:                !CRT_ISSUER!
+echo   Validity From:         !CRT_START!
+echo   Validity Until:        !CRT_END!
+echo   Validity:              !VALIDITY_DAYS! days
+echo   Root CA Validity:     !CA_VALIDITY_DAYS! days
+echo   SAN Contents:          !CRT_SAN!
+echo   SHA256 Fingerprint:    !CRT_FP!
 echo.
 echo   [ File Locations ]
 echo   Root CA Certificate (for clients): !CA_CRT!
@@ -653,25 +973,60 @@ set ASSIGNED_SSL_PORTS=
 call :show_nginx_summary
 echo.
 )
+echo   --------------------------------------------
 echo   [ Client Device Setup Steps ]
-echo   1. Download the Root CA certificate on each client device:
-echo      scp -o StrictHostKeyChecking=no Administrator@!SERVER_IP!:!CA_CRT:\=/! ./anycert-ca.crt
-echo      (Use Windows SSH account to connect, or manually copy the CA file)
+echo   Option A: Manual
 echo.
-echo   2. Add the following entry to the client's hosts file:
-echo      !SERVER_IP!    !SERVER_FQDN!
+echo     1. Download the Root CA certificate on each client device:
+echo        scp -o StrictHostKeyChecking=no Administrator@!SERVER_IP!:!CA_CRT:\=/! ./anycert-ca.crt
+echo        (Use Windows SSH account to connect, or manually copy the CA file)
 echo.
-echo   3. Connect to the server from your browser using the FQDN:
-echo      https://!SERVER_FQDN!:^<port^>
+echo     2. Add the following entry to the client's hosts file:
+echo        !SERVER_IP!    !SERVER_FQDN!
 echo.
-echo   👉 Recommended: Execute the corresponding client script directly on the client machine:
-echo      - Windows: anycert-windows.bat
-echo      - Linux:   sudo bash anycert-linux.sh
-echo      - macOS:   sudo bash anycert-macos.sh
+echo     3. Connect to the server from your browser using the FQDN:
+echo        https://!SERVER_FQDN!:^<port^>
+echo.
+echo   Option B: Automatic
+echo.
+echo     👉 Recommended: Execute the corresponding client script directly on the client machine:
+echo        - Windows: anycert-windows.bat
+echo        - Linux:   sudo bash anycert-linux.sh
+echo        - macOS:   sudo bash anycert-macos.sh
 echo.
 echo Installation complete!
 pause
 exit /b 0
+
+:: ============================================================
+::  Helper: convert "Mmm DD HH:MM:SS YYYY GMT" to Julian Day Number (sets JDN)
+:: ============================================================
+:date_to_days
+set "dt_ds=%~1"
+set "dt_mabbr=!dt_ds:~0,3!"
+set "dt_rest=!dt_ds:~4!"
+for /f "tokens=1,3" %%a in ("!dt_rest!") do (
+    set "dt_dd=%%a"
+    set "dt_yyyy=%%b"
+)
+set "dt_mm=0"
+if /i "!dt_mabbr!"=="Jan" set "dt_mm=1"
+if /i "!dt_mabbr!"=="Feb" set "dt_mm=2"
+if /i "!dt_mabbr!"=="Mar" set "dt_mm=3"
+if /i "!dt_mabbr!"=="Apr" set "dt_mm=4"
+if /i "!dt_mabbr!"=="May" set "dt_mm=5"
+if /i "!dt_mabbr!"=="Jun" set "dt_mm=6"
+if /i "!dt_mabbr!"=="Jul" set "dt_mm=7"
+if /i "!dt_mabbr!"=="Aug" set "dt_mm=8"
+if /i "!dt_mabbr!"=="Sep" set "dt_mm=9"
+if /i "!dt_mabbr!"=="Oct" set "dt_mm=10"
+if /i "!dt_mabbr!"=="Nov" set "dt_mm=11"
+if /i "!dt_mabbr!"=="Dec" set "dt_mm=12"
+set /a "dt_a=(14-dt_mm)/12"
+set /a "dt_y=dt_yyyy+4800-dt_a"
+set /a "dt_m=dt_mm+12*dt_a-3"
+set /a "JDN=dt_dd+(153*dt_m+2)/5+365*dt_y+dt_y/4-dt_y/100+dt_y/400-32045"
+goto :eof
 
 :: ============================================================
 ::  UNINSTALL MODE
@@ -782,8 +1137,8 @@ exit /b 0
 
 :resolve_ssl_port
 set "P=%~1"
-set /a SSL_P=%P%+10000
-if !SSL_P! gtr 65535 set /a SSL_P=%P%-10000
+set /a SSL_P=%P%+!PORT_OFFSET!
+if !SSL_P! gtr 65535 set /a SSL_P=%P%-!PORT_OFFSET!
 
 :res_loop
 set COLLIDED=0
@@ -795,7 +1150,7 @@ for %%A in (!ASSIGNED_SSL_PORTS!) do (
 )
 if !COLLIDED! equ 1 (
     set /a SSL_P=!SSL_P!+1
-    if !SSL_P! gtr 65535 set SSL_P=10000
+    if !SSL_P! gtr 65535 set SSL_P=!PORT_OFFSET!
     goto res_loop
 )
 set ASSIGNED_SSL_PORTS=!ASSIGNED_SSL_PORTS! !SSL_P!
@@ -811,10 +1166,54 @@ call :resolve_ssl_port !CURR_PORT!
 echo   - https://!SERVER_FQDN!:!SSL_P!  -^>  HTTP localhost:!CURR_PORT!
 goto show_nginx_summary
 
+:sanitize_proxyports
+set "SP_TMP="
+if "!PROXY_PORTS!"=="" exit /b 0
+for %%P in (!PROXY_PORTS!) do (
+    set "SP_T=%%P"
+    if "!SP_T:~0,1!"=="+" set "SP_T=!SP_T:~1!"
+    if "!SP_T:~0,1!"=="-" set "SP_T=!SP_T:~1!"
+    if "!SP_T:~0,1!"==":" set "SP_T=!SP_T:~1!"
+    if "!SP_TMP!"=="" (set "SP_TMP=!SP_T!") else (set "SP_TMP=!SP_TMP! !SP_T!")
+)
+set "PROXY_PORTS=!SP_TMP!"
+goto :sort_proxyports
+exit /b 0
+
+:sort_proxyports
+if "!PROXY_PORTS!"=="" exit /b 0
+:: Numeric bubble sort using a dummy nth loop trick
+set "SRT_NEXT=!PROXY_PORTS!"
+set "SRT_RES="
+:srt_outer
+if "!SRT_NEXT!"=="" goto srt_finish
+:: Find the smallest number in SRT_NEXT
+set "SRT_MIN=99999"
+set "SRT_NEW="
+for %%P in (!SRT_NEXT!) do (
+   if %%P lss !SRT_MIN! set "SRT_MIN=%%P"
+)
+:: Rebuild SRT_NEXT excluding SRT_MIN (first occurrence only)
+set "SRT_SKIPPED=0"
+for %%P in (!SRT_NEXT!) do (
+   if !SRT_SKIPPED! equ 0 if "%%P"=="!SRT_MIN!" (set "SRT_SKIPPED=1") else (
+      if "!SRT_NEW!"=="" (set "SRT_NEW=%%P") else (set "SRT_NEW=!SRT_NEW! %%P")
+   )
+   if !SRT_SKIPPED! equ 1 if not "%%P"=="!SRT_MIN!" (
+      if "!SRT_NEW!"=="" (set "SRT_NEW=%%P") else (set "SRT_NEW=!SRT_NEW! %%P")
+   )
+)
+set "SRT_NEXT=!SRT_NEW!"
+if "!SRT_RES!"=="" (set "SRT_RES=!SRT_MIN!") else (set "SRT_RES=!SRT_RES! !SRT_MIN!")
+goto srt_outer
+:srt_finish
+set "PROXY_PORTS=!SRT_RES!"
+exit /b 0
+
 :process_port_adjustments
-:: Check if the input contains '-' using native string replacement
-if "!NEW_PROXY_PORTS!"=="!NEW_PROXY_PORTS:-=!" (
-    :: No '-' found, simple overwrite
+:: Check if the input contains '+' or '-' using native string replacement
+if "!NEW_PROXY_PORTS!"=="!NEW_PROXY_PORTS:-=!" if "!NEW_PROXY_PORTS!"=="!NEW_PROXY_PORTS:+=!" (
+    :: Neither '+' nor '-' found, simple overwrite
     set "PROXY_PORTS=!NEW_PROXY_PORTS!"
     exit /b 0
 )
@@ -831,6 +1230,16 @@ for /f "tokens=1*" %%A in ("!ADJUST_INPUT!") do (
 set "FIRST_CHAR=!TOKEN:~0,1!"
 if "!FIRST_CHAR!"=="-" (
     set "TARGET_PORT=!TOKEN:~1!"
+) else (
+    set "TARGET_PORT=!TOKEN!"
+    if "!FIRST_CHAR!"=="+" set "TARGET_PORT=!TOKEN:~1!"
+)
+:: Strip all remaining leading +, -, : prefixes from TARGET_PORT
+if "!TARGET_PORT:~0,1!"=="+" set "TARGET_PORT=!TARGET_PORT:~1!"
+if "!TARGET_PORT:~0,1!"=="-" set "TARGET_PORT=!TARGET_PORT:~1!"
+if "!TARGET_PORT:~0,1!"==":" set "TARGET_PORT=!TARGET_PORT:~1!"
+
+if "!FIRST_CHAR!"=="-" (
     :: Remove TARGET_PORT from PROXY_PORTS
     set "NEW_LIST="
     for %%P in (!PROXY_PORTS!) do (
@@ -844,8 +1253,6 @@ if "!FIRST_CHAR!"=="-" (
     )
     set "PROXY_PORTS=!NEW_LIST!"
 ) else (
-    set "TARGET_PORT=!TOKEN!"
-    if "!FIRST_CHAR!"=="+" set "TARGET_PORT=!TOKEN:~1!"
     :: Add TARGET_PORT to PROXY_PORTS if not already present
     set "ALREADY_HAS=0"
     for %%P in (!PROXY_PORTS!) do (

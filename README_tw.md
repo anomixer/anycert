@@ -31,26 +31,26 @@
 
 處理自託管內網 Web UI 的 TLS 憑證有幾種常見方式，下表詳細比較各方法的差異。
 
-| 特性 | **預設自簽憑證** | **Let's Encrypt (DNS-01 / Cloudflare)** | **Tunnel 服務 (Cloudflared / ngrok)** | **Mesh VPN (Tailscale HTTPS)** | **anycert (本腳本)** |
+| 特性 | **一般自簽憑證 (如 PVE 預設或手動產生的單一憑證)** | **Let's Encrypt (DNS-01 / Cloudflare)** | **Tunnel 服務 (Cloudflared / ngrok)** | **Mesh VPN (Tailscale HTTPS)** | **anycert (本腳本)** |
 |---|---|---|---|---|---|
-| **瀏覽器鎖頭 🔒** | ❌ 警告（需每年重新手動信任） | ✅ 有 | ✅ 有 | ✅ 有 | ✅ 有（完成用戶端設定後） |
+| **瀏覽器鎖頭 🔒** | ❌ 無 (持續顯示紅色警告/不安全) | ✅ 有 | ✅ 有 | ✅ 有 | ✅ 有（完成用戶端設定後） |
 | **需要公開網域** | ✅ 否 | ❌ 是 | ❌ 是 | ✅ 否 | ✅ 否 |
 | **需要網際網路連線** | ✅ 否 | ❌ 是 | ❌ 必須連網 | ❌ 必須連網 | ✅ 否 — 完全離線可用 |
 | **主機名稱公開曝露** | ✅ 否 | ❌ 是 (CT logs) | ❌ 是 (CT logs) | ✅ 否 | ✅ 否 |
 | **可在隔離 LAN 使用** | ✅ 是 | ❌ 否 | ❌ 否 | ❌ 否 | ✅ 是 |
-| **更新後用戶端重設** | ❌ 是（每年更新都要重做） | ✅ 不需要 | ✅ 不需要 | ✅ 不需要 | ✅ 不需要 — Root CA 10年受信任 |
-| **資料不繞經外網** | ✅ 是 | ✅ 是 | ❌ 否（繞經邊緣節點） | ❌ 否（通常需要打洞或中繼） | ✅ 是 — 純區域網路速度 |
-| **多用戶端信任** | 每台每更新一次手動一次 | 自動 | 自動 | 每台都要安裝用戶端軟體 | 每台用戶端只需設定一次 |
-| **費用** | 免費 | 免費 | 免費 / 部分付費 | 免費 / 企業收費 | 免費 |
-| **以 FQDN 存取** | ✅ 是 (截警告) | ✅ 是 | ✅ 是 | ✅ 是 (限 `*.ts.net`) | ✅ 是 |
-| **以 IP 存取** | ✅ 是 (截警告) | ❌ 否 | ❌ 否 | ❌ 否 | ✅ 是 (SAN 包含 IP) |
-| **設定複雜度** | 無 | 中高 | 中 | 中 | 低 |
+| **憑證更新免重設用戶端** | ❌ 否 (每次更新伺服器憑證，所有用戶端皆須重新按例外警告或手動重載) | ✅ 是 | ✅ 是 | ✅ 是 | ✅ 是 (Root CA 十年保持受信任) |
+| **資料不繞經外網** | ✅ 是 | ✅ 是 | ❌ 否 (繞經外部邊緣節點) | ❌ 否 (通常需要打洞或繞經中繼伺服器) | ✅ 是 — 純區域網路速度 |
+| **用戶端設定與維護成本** | ❌ 高 (每台裝置每次憑證到期更新，都必須重新接受警告或重新匯入) | ✅ 免設定 (瀏覽器原生信任公網 CA) | ✅ 免設定 (瀏覽器原生信任公網 CA) | ❌ 中 (每台連線裝置都必須下載、登入並常駐執行 Tailscale 軟體) | ✅ 低 (每台裝置僅需執行一次性腳本，不需常駐程式/不佔系統資源) |
+| **費用** | 免費 | 免費 (每 3 個月需重簽) | 免費 / 部分付費 | 免費 / 企業收費 | 免費 |
+| **以 FQDN 存取** | ⚠️ 可 (但顯示不安全/紅色警告) | ✅ 是 | ✅ 是 | ✅ 是 (限 `*.ts.net`) | ✅ 是 |
+| **以 IP 存取** | ⚠️ 可 (但顯示不安全/紅色警告) | ❌ 否 | ❌ 否 | ❌ 否 | ✅ 是 (SAN 包含多個 IP) |
+| **設定複雜度** | 無 | 中高 | 中 | 中 | 低 (伺服器一個指令，用戶端一個指令) |
 
 ### 各方法適用情境
 - **Let's Encrypt + Cloudflare**：適合家裡有公開網域，且不介意主機名稱暴露在 Certificate Transparency Logs 中的 Homelab 用戶。
 - **Cloudflared / ngrok**：適合需要從外網存取內網服務的人，但有隱私安全疑慮，且無法在離線/無網網路下運作。
 - **Tailscale HTTPS**：適合已經全站部署 Tailscale 的環境，但必須連網更新憑證，且所有用戶端都必須加入同一個 Tailnet。
-- **anycert**：推薦用於任何**無公開網域、處於內網隔離環境、或不希望服務暴露至外網**的自託管基礎設施。其核心優勢是**完全離線**、**資料安全不經外網**，且**支援直接以 IP 存取**。
+- **anycert**：推薦用於任何**無公開網域、處於內網隔離環境、或不希望服務暴露至外網**的自託管基礎設施。其核心優勢是**完全離線**、**資料安全不經外網**，且**支援直接以 IP 存取**。此外，它支援在憑證的 SAN 中**綁定多個 IP（例如實體區域網路 IP + Tailscale/VPN 虛擬 IP）**，讓您的自託管服務能在多套網路架構中都順暢取得綠色鎖頭信任。
 
 ---
 
@@ -73,6 +73,9 @@
 - 您的自託管服務登入密碼外洩。
 - 傳輸的 AI API Keys (如 OpenAI/Claude Tokens) 被竊取。
 - LLM 聊天隱私與資料庫內容被中途監聽。
+
+### 3. 防止檔案下載被瀏覽器標示為不安全而封鎖 (Insecure Downloads Policy)
+現代瀏覽器（例如 Google Chrome）對普通 HTTP 連線有嚴格的「不安全下載」防護機制。當您在 HTTP 環境下從自託管服務下載檔案（如系統備份檔、應用程式 Log、AI 模型權重檔或匯出報表）時，瀏覽器會主動將其判定為風險下載並直接攔截封鎖，迫使使用者必須展開下載清單，在多層警告中手動點選「仍要保留」才能存取檔案。使用 HTTPS 可以讓本地下載完全信任，流暢完成存檔。
 
 ---
 
@@ -100,18 +103,16 @@ cd anycert
 sudo bash anycert.sh
 ```
 腳本將會：
-1. 自動偵測 IP、主機名稱與 FQDN。
+1. 自動偵測 IP、主機名稱與 FQDN。您可以確認並**選擇性輸入額外的 IP 位址（以空白分隔）**，例如 Tailscale IP、VPN IP 或其他實體網路 IP，以一併寫入憑證的 SAN（主機別名）以及 Nginx 的 `server_name` 配置中。
 2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **3 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **4 個**）：
-   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port+10000` 到 `HTTP Port` 的反向代理封裝。
+    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port + 偏移量` 到 `HTTP Port` 的反向代理封裝（**偏移量預設為 10000，可自行設定**，如 `+1` / `+10` / `+443`，例如 `3000 → 13000`）。
    - **Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
    - **Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成 HTTPS 服務的環境）。
    - **Generate Only [Painful / Hard Way]**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
 
-> **選單編號提示**：`anycert.sh` 一般伺服器為 `[1] Nginx` / `[2] Custom` / `[3] Generate Only`；`anycert.bat` 為 `[1] Custom` / `[2] Nginx（預設）` / `[3] Generate Only`。以下以**模式名稱**說明，與選單數字無關。
-
 **各模式流量示意：**
 
-**Nginx 一鍵代理** — 適合純 HTTP 服務、多容器並存；App 維持原 HTTP Port，HTTPS 走 `Port + 10000`：
+**Nginx 一鍵代理** — 適合純 HTTP 服務、多容器並存；App 維持原 HTTP Port，HTTPS 走 `Port + 偏移量`（預設 10000，可自訂）：
 
 ```mermaid
 flowchart LR
@@ -122,7 +123,7 @@ flowchart LR
     end
 ```
 
-**Custom Path** — 適合服務**本身已支援 HTTPS**（PVE、OMV、IIS、自架 Nginx 等）；憑證打入服務路徑後，以**原生 Port** 提供 HTTPS：
+**Custom Path** — 適合服務**本身已支援 HTTPS**（OMV、IIS、自架 Nginx 等）；憑證打入服務路徑後，以**原生 Port** 提供 HTTPS：
 
 ```mermaid
 flowchart LR
@@ -161,6 +162,10 @@ flowchart LR
 anycert.bat
 ```
 腳本將會搜尋系統中的 OpenSSL（例如 Git for Windows 內建的 OpenSSL），簽發憑證後，提供與 Linux 完全一致的 Nginx 一鍵代理功能（自動下載 Nginx 設定並啟動），或允許您將憑證部署到自訂路徑（如 IIS）。
+
+> [!NOTE]
+> **Windows 下的 Nginx 部署**
+> 若您選擇「一鍵 Nginx 代理」且本機未安裝 Nginx，腳本會透過 Windows 原生 `curl.exe` 與 `tar.exe` 自動從 Nginx 官網下載並解壓縮至 `C:\nginx\`。若在隔離/離線內網環境中，您也可以手動下載 Nginx zip 並解壓至該資料夾，確保 `C:\nginx\nginx.exe` 存在即可。
 
 > [!TIP]
 > **✨ 智慧設定更新選單**
@@ -204,6 +209,7 @@ sudo bash anycert-macos.sh
    - **離線手動複製模式 (Offline / Manual Mode)**：若 Windows Server 既無 SSH 也無 SMB，您可選擇 `Option 2`（Manual Mode），手動以隨身碟、RDP 或其他方式拷貝 CA 憑證至本機，腳本仍會為您自動執行後續所有的信任區與 hosts 安裝設定！
 3. **FQDN 自動對應**：自動將 FQDN 寫入用戶端的 `hosts` 檔案中。
 4. **系統與瀏覽器信任**：將 CA 憑證匯入系統信任區（Linux 版會同時自動匯入 Chrome 與 Firefox 的 NSS 憑證資料庫，macOS 版匯入 Keychain）。
+5. **列出所有可用 HTTPS URLs**：對於所有設定的反向代理連接埠，腳本會同時列出 FQDN 版本與 IP 版本的 HTTPS 網址（例如 `https://mysrv:13000` 與 `https://192.168.1.100:13000`）。這能提供即時的連線選擇，並且當您的前端開發伺服器（例如 Vite）透過 `allowedHosts` 政策阻擋 Hostname 存取時，可作為快速的備用 IP 連線選項。
 
 ---
 
@@ -217,14 +223,18 @@ sudo bash anycert-macos.sh
 ## 部署範例 (自定義服務套用)
 
 ### 1. Nginx 一鍵反向代理 (適用於多容器 / 多服務並存，最懶人推薦)
-若您在伺服器上同時跑了多個 HTTP 服務（例如：Ollama 在 11434、Portainer 在 9443、Node.js LLMChat 在 3000、Python Web 在 6000），直接選擇 **Option 2 (Auto-Setup Nginx SSL Proxy)**：
-- 程式會掃描目前本機監聽的 TCP 連接埠（如 `3000 6000 9443 11434`）並印出提示。
-- 輸入您要以 SSL 封裝的連接埠，Nginx 就會自動監聽對應的 `安全埠 (原本連接埠 + 10000)`：
-  - `https://mysrv:13000` ➔ 轉發至本地 `http://localhost:3000` (LLMChat)
-  - `https://mysrv:16000` ➔ 轉發至本地 `http://localhost:6000` (Python)
-  - `https://mysrv:19443` ➔ 轉發至本地 `http://localhost:9443` (Portainer)
+若您在伺服器上同時跑了多個 HTTP 服務（例如：Ollama、Next.js、Vite、vLLM、OpenClaw 等），直接選擇 **Option 2 (Auto-Setup Nginx SSL Proxy)**：
+- 程式會掃描目前本機監聽的 TCP 連接埠（例如您目前正在運行的 `3000`、`5173` 等服務埠）並印出 [TIP] 提示。
+- 輸入您要以 SSL 封裝的連接埠，Nginx 就會自動監聽對應的 `安全埠 (原本連接埠 + 偏移量，預設 10000，可自訂)`：
+  - `https://mysrv:13000` ➔ 轉發至本地 `http://localhost:3000` (Next.js app / LLMChat)
+  - `https://mysrv:15173` ➔ 轉發至本地 `http://localhost:5173` (Vite apps)
+  - `https://mysrv:17860` ➔ 轉發至本地 `http://localhost:7860` (Gradio apps)
+  - `https://mysrv:18000` ➔ 轉發至本地 `http://localhost:8000` (vLLM)
+  - `https://mysrv:18081` ➔ 轉發至本地 `http://localhost:8081` (MongoDB Web UI)
+  - `https://mysrv:19119` ➔ 轉發至本地 `http://localhost:9119` (hermes-agent)
   - `https://mysrv:21434` ➔ 轉發至本地 `http://localhost:11434` (Ollama)
-- 您**完全不需修改任何 Docker 容器或程式碼設定**，也無須在容器內啟用 HTTPS（例如可以將 Portainer 容器的 HTTP 埠映射至宿主機的 9443 埠），全交給本機 Host 端 Nginx 在外層套上 SSL 憑證防護。
+  - `https://mysrv:28789` ➔ 轉發至本地 `http://localhost:18789` (OpenClaw)
+- 您**完全不需修改任何 Docker 容器或程式碼設定**，也無須在容器內啟用 HTTPS，全交給本機 Host 端 Nginx 在外層套上 SSL 憑證防護。
 
 ### 2. OpenMediaVault (OMV)
 OMV 預設的 nginx 憑證路徑通常位於 `/etc/ssl/certs/`，您可以將其覆蓋（Option 1）：

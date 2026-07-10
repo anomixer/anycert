@@ -353,6 +353,9 @@ if [[ "$SMB_CONNECTED" == "true" ]]; then
     if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
         if [[ -f "${mount_dir}/anycert/anycert.conf" ]]; then
             SERVER_DNS=$(grep "^SERVER_FQDN=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n')
+            REMOTE_PROXY_PORTS=$(grep "^PROXY_PORTS=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
+            REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n')
+            REMOTE_PROFILE=$(grep "^PROFILE=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
         fi
         umount "$mount_dir" >/dev/null 2>&1
     fi
@@ -361,9 +364,24 @@ fi
 
 if [[ -z "$SERVER_DNS" ]]; then
     if [[ "${SERVER_OS,,}" == "y" ]]; then
-        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'powershell -NoProfile -Command "[System.Net.Dns]::GetHostEntry(\"\").HostName"' 2>/dev/null || true)
+        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'type C:\anycert\anycert.conf 2>nul' 2>/dev/null || true)
     else
-        SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null' 2>/dev/null || true)
+    fi
+    if [[ -n "$REMOTE_CONF" ]]; then
+        SERVER_DNS=$(echo "$REMOTE_CONF" | grep "^SERVER_FQDN=" | cut -d= -f2- | tr -d '\r\n')
+        REMOTE_PROXY_PORTS=$(echo "$REMOTE_CONF" | grep "^PROXY_PORTS=" | cut -d= -f2- | tr -d '\r\n"')
+        REMOTE_PORT_OFFSET=$(echo "$REMOTE_CONF" | grep "^PORT_OFFSET=" | cut -d= -f2- | tr -d '\r\n')
+        REMOTE_PROFILE=$(echo "$REMOTE_CONF" | grep "^PROFILE=" | cut -d= -f2- | tr -d '\r\n"')
+    fi
+    if [[ -z "$SERVER_DNS" ]]; then
+        if [[ "${SERVER_OS,,}" == "y" ]]; then
+            local comp_name
+            comp_name=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'echo %COMPUTERNAME%' 2>/dev/null | tr -d '\r\n' | xargs)
+                SERVER_DNS="${comp_name}"
+        else
+            SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+        fi
     fi
 fi
 
@@ -434,21 +452,38 @@ echo "====================================================="
 echo "  Setup Complete!"
 echo "====================================================="
 echo
-echo "  Server IP   : $SERVER_IP"
-echo "  Server DNS  : $SERVER_DNS"
-echo "  CA Fingerprint: $CERT_FINGER_SHA256"
-echo "  CA Local Path : $CA_LOCAL"
+printf "  %-17s : %s\n" "Server IP" "$SERVER_IP"
+printf "  %-17s : %s\n" "Server DNS" "$SERVER_DNS"
+printf "  %-17s : %s\n" "CA Fingerprint" "$CERT_FINGER_SHA256"
+printf "  %-17s : %s\n" "CA Local Path" "$CA_LOCAL"
+CA_FROM=$(openssl x509 -in "$CA_LOCAL" -noout -startdate 2>/dev/null | cut -d= -f2)
+CA_UNTIL=$(openssl x509 -in "$CA_LOCAL" -noout -enddate 2>/dev/null | cut -d= -f2)
+printf "  %-17s : %s\n" "CA Validity From" "$CA_FROM"
+printf "  %-17s : %s\n" "CA Validity Until" "$CA_UNTIL"
 echo
 echo "  All Currently Registered Anycert Servers:"
 echo "  -----------------------------------"
 awk '{print "    " $1 "  <>  " $2}' "$INFO_FILE"
 echo
-echo "  Please open in your browser: https://${SERVER_DNS}"
+echo "  Available HTTPS connections (you can open any in browser):"
+if [[ "${REMOTE_PROFILE:-}" == "pve" ]]; then
+    echo "    https://${SERVER_DNS}:8006"
+    echo "    https://${SERVER_IP}:8006"
+elif [[ -n "${REMOTE_PROXY_PORTS:-}" ]]; then
+    PORT_OFFSET_VAL="${REMOTE_PORT_OFFSET:-10000}"
+    for P in $REMOTE_PROXY_PORTS; do
+        SSL_P=$((P + PORT_OFFSET_VAL))
+        [[ $SSL_P -gt 65535 ]] && SSL_P=$((P - PORT_OFFSET_VAL))
+        echo "    https://${SERVER_DNS}:${SSL_P}   (via FQDN)"
+        echo "    https://${SERVER_IP}:${SSL_P}   (via IP, use this if app blocks hostname)"
+        echo "      ->  http://localhost:${P}"
+        echo
+    done
+else
+    echo "    https://${SERVER_DNS}"
+    echo "    https://${SERVER_IP}"
+    echo "    (Run anycert.sh/bat on the server to configure Nginx SSL proxy ports)"
+fi
 echo
 echo "  To uninstall, run: sudo bash anycert-macos.sh -u"
 echo
-
-read -rp "  Open this page in browser now? [y/N]: " OPEN_BROWSER
-if [[ "$OPEN_BROWSER" =~ ^[Yy]$ ]]; then
-    open "https://${SERVER_DNS}"
-fi

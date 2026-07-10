@@ -31,26 +31,26 @@ One command on the server, one command on each client. Get a green lock in your 
 
 How does `anycert` compare with other internal TLS/HTTPS solutions?
 
-| Feature | **Default Self-Signed** | **Let's Encrypt (DNS-01 / Cloudflare)** | **Tunnels (Cloudflared / ngrok)** | **Mesh VPN (Tailscale HTTPS)** | **anycert (This Script)** |
+| Feature | **Ad-hoc Self-Signed (e.g. app-default)** | **Let's Encrypt (DNS-01 / Cloudflare)** | **Tunnels (Cloudflared / ngrok)** | **Mesh VPN (Tailscale HTTPS)** | **anycert (This Script)** |
 |---|---|---|---|---|---|
-| **Browser Lock 🔒** | ❌ Warnings (Must re-trust every year) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (After client setup) |
+| **Browser Lock 🔒** | ❌ No (Shows red warning / Not Secure) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (After client setup) |
 | **Needs Public Domain** | ✅ No | ❌ Yes | ❌ Yes | ✅ No | ✅ No |
 | **Needs Internet** | ✅ No | ❌ Yes | ❌ Must be online | ❌ Must be online | ✅ No — Works 100% offline |
 | **Exposes Hostname** | ✅ No | ❌ Yes (CT logs) | ❌ Yes (CT logs) | ✅ No | ✅ No |
 | **Isolated LAN Support** | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Yes |
-| **Client Reconfig on Renew**| ❌ Yes (Every year) | ✅ No | ✅ No | ✅ No | ✅ No — Root CA stays trusted |
-| **LAN Data Stays Local** | ✅ Yes | ✅ Yes | ❌ No (Via edge nodes) | ❌ No (Often routes via DERPs/relays) | ✅ Yes — Full LAN speeds |
-| **Multi-Client Setup** | Manual trust on every client per renew | Automatic | Automatic | Requires client agent on all machines | Run client script once per client |
-| **Cost** | Free | Free | Free / Paid plans | Free / Paid plans | Free |
-| **FQDN Access** | ✅ Yes (With warning) | ✅ Yes | ✅ Yes | ✅ Yes (Limit `*.ts.net`) | ✅ Yes |
-| **IP Access** | ✅ Yes (With warning) | ❌ No | ❌ No | ❌ No | ✅ Yes (SAN contains IP) |
-| **Complexity** | None | High | Medium | Medium | Low |
+| **No Client Reconfig on Renew** | ❌ No (Must re-accept warnings / re-import certs on all clients) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes (Root CA stays trusted) |
+| **LAN Data Stays Local** | ✅ Yes | ✅ Yes | ❌ No (Routes via external edge nodes) | ❌ No (Often routes via DERP relays) | ✅ Yes — Full LAN speeds |
+| **Client Maintenance & Setup** | ❌ High (Manual exceptions / imports on every client for every renewal) | ✅ None (Browsers natively trust public CA) | ✅ None (Browsers natively trust public CA) | ❌ Medium (Requires installing & running client agent on all devices) | ✅ Low (One-time client script run, no background daemon/agent) |
+| **Cost** | Free | Free (Must renew every 3 months) | Free / Paid plans | Free / Paid plans | Free |
+| **FQDN Access** | ⚠️ Yes (With red warning) | ✅ Yes | ✅ Yes | ✅ Yes (Limited to `*.ts.net`) | ✅ Yes |
+| **IP Access** | ⚠️ Yes (With red warning) | ❌ No | ❌ No | ❌ No | ✅ Yes (SAN contains multiple IPs) |
+| **Complexity** | None | High | Medium | Medium | Low (One command server, one command client) |
 
 ### Best Use Cases
 - **Let's Encrypt + Cloudflare**: Best for homelabs with public domains where you don't mind exposing hostnames to public Certificate Transparency logs.
 - **Cloudflared / ngrok**: Good for exposing internal services to the public internet, but poses security risks and fails in offline/LAN environments.
 - **Tailscale HTTPS**: Great if your entire fleet is already on Tailscale, but requires an active internet connection to update certificates and forces you to use `*.ts.net` domains.
-- **anycert**: Ideal for **fully offline, air-gapped, or secure internal LANs** where no public exposure is wanted, data privacy is critical, and direct IP access is preferred.
+- **anycert**: Ideal for **fully offline, air-gapped, or secure internal LANs** where no public exposure is wanted, data privacy is critical, and direct IP access is preferred. It supports adding **multiple IP addresses (e.g. physical LAN + Tailscale/VPN virtual IPs)** to the certificate's SAN, making it fully trustable across multiple networks.
 
 ---
 
@@ -59,7 +59,7 @@ How does `anycert` compare with other internal TLS/HTTPS solutions?
 Using HTTPS on a local area network (LAN) provides critical benefits beyond simply **eliminating browser warning screens**:
 
 ### 1. Enabling Modern Browser APIs (Secure Contexts Enforcement)
-Modern browsers (like Chrome, Safari, Edge) enforce strict security policies that disable many powerful web APIs unless the page is loaded in a **"Secure Context"** (i.e., over `https://` or on `http://localhost` **only when accessed locally on the server machine**).
+Modern browsers (like Chrome, Safari, Edge) enforce a strict security policy that disables many powerful web APIs unless the page is loaded in a **"Secure Context"** (i.e., over `https://` or on `http://localhost` **only when accessed locally on the server machine**).
 
 If you connect from other devices on the LAN (like your phone, tablet, or another laptop) using plain `http://` with a local IP or custom FQDN, the browser will flag the connection as insecure and **forcefully disable**:
 - **Clipboard Operations (Clipboard API)**: This is a major pain point! In local LLM chat applications (e.g., Open WebUI, LLMChat), clicking the **"Copy Code"** button on code blocks will **completely fail** under HTTP cross-device connections.
@@ -73,6 +73,9 @@ In shared network environments (such as offices, schools, co-living spaces, or p
 - Theft of login credentials to your self-hosted services.
 - Sniffing of sensitive AI API Keys (such as OpenAI/Anthropic tokens) transmitted to local LLMs.
 - Local eavesdropping on private LLM chats and database payloads.
+
+### 3. Preventing Blocked Downloads (Insecure Downloads Policy)
+Modern browsers (such as Google Chrome) enforce a strict "Insecure Downloads" policy. If a page is loaded via an insecure connection (plain HTTP), trying to download files (like backups, application logs, AI model weights, or exported files) will trigger a warning. The browser will flag it as an insecure download, block it, and force the user to manually expand settings and select "Keep anyway" to obtain the file. Serving your local tools over HTTPS solves this, allowing downloads to complete smoothly.
 
 ---
 
@@ -100,18 +103,16 @@ cd anycert
 sudo bash anycert.sh
 ```
 The script will:
-1. Auto-detect your IP, hostname, and FQDN.
+1. Auto-detect your IP, hostname, and FQDN. You can confirm them and **optionally input additional space-separated IP addresses** (e.g. Tailscale IP, VPN IP, or other LAN IPs) to be included in the certificate's SAN (Subject Alternative Name) and Nginx's `server_name` rules.
 2. Let you choose a deployment profile (offers **3 options** on standard servers, and auto-detects Proxmox VE to offer **4 options**):
-   - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port+10000` to `HTTP Port`).
+    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port + offset` to `HTTP Port`). **The offset defaults to 10000 but is fully customizable** (e.g. `+1` / `+10` / `+443`, e.g. `3000 → 13000`).
    - **Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
    - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (for services that **already support native HTTPS**).
    - **Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
 
-> **Menu numbering note**: On `anycert.sh` (standard servers), options are `[1] Nginx` / `[2] Custom` / `[3] Generate Only`. On `anycert.bat`, they are `[1] Custom` / `[2] Nginx (default)` / `[3] Generate Only`. The diagrams below are labeled by **profile name**, not menu number.
-
 **Traffic flow by profile:**
 
-**Nginx SSL Proxy** — Best for plain HTTP services or multi-container setups. Apps keep their HTTP port; HTTPS is served on `Port + 10000`:
+**Nginx SSL Proxy** — Best for plain HTTP services or multi-container setups. Apps keep their HTTP port; HTTPS is served on `Port + offset` (defaults to 10000, customizable):
 
 ```mermaid
 flowchart LR
@@ -122,7 +123,7 @@ flowchart LR
     end
 ```
 
-**Custom Path** — Best when the service **already terminates HTTPS** (PVE, OMV, IIS, your own Nginx, etc.). Certs are copied in-place; clients use the **native port**:
+**Custom Path** — Best when the service **already terminates HTTPS** (OMV, IIS, your own Nginx, etc.). Certs are copied in-place; clients use the **native port**:
 
 ```mermaid
 flowchart LR
@@ -161,6 +162,10 @@ Run Command Prompt (cmd) as **Administrator** and execute:
 anycert.bat
 ```
 The script will search for OpenSSL (e.g. from Git for Windows), generate the certificates, and allow you to deploy them using the Nginx automatic proxy (automatic download & setup) or to custom paths (e.g. IIS).
+
+> [!NOTE]
+> **Windows Nginx Deployment**
+> If you choose Nginx SSL Proxy and Nginx is not found locally, the script will automatically download Nginx from the official website and extract it to `C:\nginx\` using Windows native `curl.exe` and `tar.exe`. In isolated or offline network environments, you can manually download the Nginx zip and extract it to `C:\nginx` ensuring `C:\nginx\nginx.exe` exists.
 
 > [!TIP]
 > **✨ Smart Configuration & Update Menu**
@@ -204,6 +209,7 @@ The client scripts will:
    - **Offline / Manual Copy Mode**: If the Windows Server has disabled both SSH and SMB, you can choose `Option 2` (Manual Mode) to manually transfer the `anycert-ca.crt` file using a USB drive, RDP, or other methods. The script will still handle the entire installation process on the client.
 3. Detect the server's FQDN and add a mapping to the local `hosts` file.
 4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles, macOS handles Keychain).
+5. **Print all available HTTPS URLs**: Lists all mapped ports with both FQDN-based and IP-based HTTPS URLs (e.g. `https://mysrv:13000` and `https://192.168.1.100:13000`). This ensures direct access is ready, and provides a quick workaround if your frontend development server (e.g. Vite) blocks hostname access via policies like `allowedHosts`.
 
 ---
 
@@ -217,14 +223,18 @@ Restart your browser and access your server securely via FQDN or IP:
 ## Deployment Examples (Custom Paths)
 
 ### 1. Nginx Automated Reverse Proxy (Recommended for multi-service environments)
-If you run multiple HTTP services concurrently (e.g., Ollama on 11434, Portainer on 9443, Node.js LLMChat on 3000, Python on 6000), choose **Option 2 (Auto-Setup Nginx SSL Proxy)**:
-- The script automatically scans active listening TCP ports on the server and lists them.
-- Enter the ports you wish to wrap in SSL. Nginx will automatically map them to `HTTPS Port + 10000`:
-  - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (LLMChat)
-  - `https://mysrv:16000` ➔ proxies to local `http://localhost:6000` (Python)
-  - `https://mysrv:19443` ➔ proxies to local `http://localhost:9443` (Portainer)
+If you run multiple HTTP services concurrently (e.g., Ollama, Next.js, Vite, vLLM, OpenClaw, etc.), choose **Option 2 (Auto-Setup Nginx SSL Proxy)**:
+- The script automatically scans active listening TCP ports on the server (displaying currently running ports, such as `3000` or `5173`, as a tip) and lists them.
+- Enter the ports you wish to wrap in SSL. Nginx will automatically map them to `HTTPS Port + offset` (defaults to 10000, customizable):
+  - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (Next.js app / LLMChat)
+  - `https://mysrv:15173` ➔ proxies to local `http://localhost:5173` (Vite apps)
+  - `https://mysrv:17860` ➔ proxies to local `http://localhost:7860` (Gradio apps)
+  - `https://mysrv:18000` ➔ proxies to local `http://localhost:8000` (vLLM)
+  - `https://mysrv:18081` ➔ proxies to local `http://localhost:8081` (MongoDB Web UI)
+  - `https://mysrv:19119` ➔ proxies to local `http://localhost:9119` (hermes-agent)
   - `https://mysrv:21434` ➔ proxies to local `http://localhost:11434` (Ollama)
-- **No changes to Docker containers or original app configurations are needed**, even if the services lack native HTTPS support (e.g. you can map Portainer container's HTTP port to host port 9443). Nginx wraps them in TLS seamlessly on the host.
+  - `https://mysrv:28789` ➔ proxies to local `http://localhost:18789` (OpenClaw)
+- **No changes to Docker containers or original app configurations are needed**, even if the services lack native HTTPS support. Nginx wraps them in TLS seamlessly on the host.
 
 ### 2. OpenMediaVault (OMV)
 OMV uses Nginx to serve its Web UI. You can deploy certificates directly (Option 1):
