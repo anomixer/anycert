@@ -110,12 +110,14 @@ import_nss_profile() {
     local PROFILE_DIR="$1" CERT_FILE="$2" CERT_NICK="$3" LABEL="$4"
     if [[ ! -f "$PROFILE_DIR/cert9.db" ]]; then return 1; fi
     sudo -u "$REAL_USER" certutil -d sql:"$PROFILE_DIR" -D -n "$CERT_NICK" >/dev/null 2>&1 || true
-    if sudo -u "$REAL_USER" certutil -d sql:"$PROFILE_DIR" \
-            -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" >/dev/null 2>&1; then
+    local ERR_MSG
+    if ERR_MSG=$(sudo -u "$REAL_USER" certutil -d sql:"$PROFILE_DIR" \
+            -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" 2>&1); then
         echo "  [OK] Imported to $LABEL: $(basename "$PROFILE_DIR")"
         return 0
     else
         echo "  [WARN] Failed to import to $LABEL: $(basename "$PROFILE_DIR")"
+        echo "         Details: $ERR_MSG"
         return 1
     fi
 }
@@ -125,16 +127,48 @@ import_nss() {
     local CERT_FILE="$1" CERT_NICK="$2"
     local IMPORTED=0
 
-    # Chrome / Chromium
+    # Chrome / Chromium (legacy path)
     local CHROME_DB="$REAL_HOME/.pki/nssdb"
     if [[ -d "$CHROME_DB" ]]; then
         sudo -u "$REAL_USER" certutil -d sql:"$CHROME_DB" -D -n "$CERT_NICK" >/dev/null 2>&1 || true
-        if sudo -u "$REAL_USER" certutil -d sql:"$CHROME_DB" \
-                -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" >/dev/null 2>&1; then
-            echo "  [OK] Imported to Chrome/Chromium NSS database."
+        local ERR_MSG
+        if ERR_MSG=$(sudo -u "$REAL_USER" certutil -d sql:"$CHROME_DB" \
+                -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" 2>&1); then
+            echo "  [OK] Imported to Chrome/Chromium NSS database (legacy)."
             IMPORTED=1
         else
-            echo "  [WARN] Chrome NSS import failed."
+            echo "  [WARN] Chrome NSS (legacy) import failed."
+            echo "         Details: $ERR_MSG"
+        fi
+    fi
+
+    # Chrome / Chromium (modern path - M146+)
+    local CHROME_MODERN_DB="$REAL_HOME/.local/share/pki/nssdb"
+    if [[ -d "$CHROME_MODERN_DB" ]]; then
+        sudo -u "$REAL_USER" certutil -d sql:"$CHROME_MODERN_DB" -D -n "$CERT_NICK" >/dev/null 2>&1 || true
+        local ERR_MSG
+        if ERR_MSG=$(sudo -u "$REAL_USER" certutil -d sql:"$CHROME_MODERN_DB" \
+                -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" 2>&1); then
+            echo "  [OK] Imported to Chrome/Chromium NSS database (modern)."
+            IMPORTED=1
+        else
+            echo "  [WARN] Chrome NSS (modern) import failed."
+            echo "         Details: $ERR_MSG"
+        fi
+    fi
+
+    # Chrome / Chromium (snap path - Ubuntu 24.04/26.04)
+    local CHROMIUM_SNAP_DB="$REAL_HOME/snap/chromium/current/.pki/nssdb"
+    if [[ -d "$CHROMIUM_SNAP_DB" ]]; then
+        sudo -u "$REAL_USER" certutil -d sql:"$CHROMIUM_SNAP_DB" -D -n "$CERT_NICK" >/dev/null 2>&1 || true
+        local ERR_MSG
+        if ERR_MSG=$(sudo -u "$REAL_USER" certutil -d sql:"$CHROMIUM_SNAP_DB" \
+                -A -t "CT,," -n "$CERT_NICK" -i "$CERT_FILE" 2>&1); then
+            echo "  [OK] Imported to Chromium (snap) NSS database."
+            IMPORTED=1
+        else
+            echo "  [WARN] Chromium (snap) NSS import failed."
+            echo "         Details: $ERR_MSG"
         fi
     fi
 
@@ -164,11 +198,27 @@ import_nss() {
 remove_nss() {
     local CERT_NICK="$1"
 
+    # Chrome / Chromium (legacy path)
     local CHROME_DB="$REAL_HOME/.pki/nssdb"
     if [[ -d "$CHROME_DB" ]]; then
         sudo -u "$REAL_USER" certutil -d sql:"$CHROME_DB" \
             -D -n "$CERT_NICK" >/dev/null 2>&1 && \
-            echo "  [OK] Removed from Chrome/Chromium NSS database." || true
+            echo "  [OK] Removed from Chrome/Chromium NSS database (legacy)." || true
+    fi
+
+    # Chrome / Chromium (modern path - M146+)
+    local CHROME_MODERN_DB="$REAL_HOME/.local/share/pki/nssdb"
+    if [[ -d "$CHROME_MODERN_DB" ]]; then
+        sudo -u "$REAL_USER" certutil -d sql:"$CHROME_MODERN_DB" \
+            -D -n "$CERT_NICK" >/dev/null 2>&1 && \
+            echo "  [OK] Removed from Chrome/Chromium NSS database (modern)." || true
+    fi
+
+    local CHROMIUM_SNAP_DB="$REAL_HOME/snap/chromium/current/.pki/nssdb"
+    if [[ -d "$CHROMIUM_SNAP_DB" ]]; then
+        sudo -u "$REAL_USER" certutil -d sql:"$CHROMIUM_SNAP_DB" \
+            -D -n "$CERT_NICK" >/dev/null 2>&1 && \
+            echo "  [OK] Removed from Chromium (snap) NSS database." || true
     fi
 
     local FF_BASE="$REAL_HOME/.mozilla/firefox"
@@ -416,9 +466,9 @@ echo
 # Try probing download paths based on server OS
 SMB_CONNECTED=false
 SMB_PASS=""
-if [[ "${SERVER_OS,,}" == "y" ]]; then
+if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
     # Windows server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
+    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
         echo "  [INFO] SCP download failed. Probing Windows SMB share [C$]..."
         
         # Check/install smbclient on Linux client
@@ -436,34 +486,42 @@ if [[ "${SERVER_OS,,}" == "y" ]]; then
         fi
 
         if command -v smbclient &>/dev/null; then
+            if [[ "$SSH_USER" != "administrator" && "$SSH_USER" != "Administrator" ]]; then
+                echo -e "  ${YELLOW}[NOTE] Windows UAC blocks custom accounts (like '$SSH_USER') from accessing C$ admin share remotely.${RESET}"
+                echo -e "         ${YELLOW}Please ensure OpenSSH is installed on the server, or use the built-in 'Administrator' account.${RESET}"
+            fi
             read -srp "  Enter password for ${SSH_USER} to connect via SMB: " SMB_PASS
             echo ""
-            if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}%${SMB_PASS}" -c "cd anycert; get anycert-ca.crt ${CA_LOCAL}" >/dev/null 2>&1; then
+            export PASSWD="$SMB_PASS"
+            if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}" -c "cd anycert; get anycert-ca.crt ${CA_LOCAL}" >/dev/null 2>&1; then
                 echo "  [OK] CA certificate successfully copied via SMB Share!"
                 SMB_CONNECTED=true
             fi
+            unset PASSWD
         fi
 
         if [[ "$SMB_CONNECTED" != "true" ]]; then
             echo
-            echo "[ERROR] Certificate download failed! Please check:"
-            echo "  1. Server IP address is correct: $SERVER_IP"
-            echo "  2. SSH / SMB credentials are correct"
-            echo "  3. The server-side anycert.bat has been executed to generate the certificate"
+            echo -e "  ${RED}[ERROR]${RESET} Certificate download failed! Please check:"
+            echo -e "  ${YELLOW}1. The server-side anycert.bat has NOT been executed yet.${RESET}"
+            echo "     (This is the most common reason! You must run the server script first to generate certificates.)"
+            echo "  2. Server IP address is correct: $SERVER_IP"
+            echo "  3. SSH / SMB credentials are correct"
             echo "  4. Firewall allows SSH (Port 22) or SMB (Port 445)"
             exit 1
         fi
     fi
 else
     # Linux server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
+    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
         echo "  [INFO] Linux default path failed. Probing backup path (/root/anycert/anycert-ca.crt)..."
-        if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
+        if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
             echo
-            echo "[ERROR] Certificate download failed! Please check:"
-            echo "  1. Server IP address is correct: $SERVER_IP"
-            echo "  2. SSH credentials are correct"
-            echo "  3. The server-side anycert.sh has been executed to generate the certificate"
+            echo -e "  ${RED}[ERROR]${RESET} Certificate download failed! Please check:"
+            echo -e "  ${YELLOW}1. The server-side anycert.sh has NOT been executed yet.${RESET}"
+            echo "     (This is the most common reason! You must run the server script first to generate certificates.)"
+            echo "  2. Server IP address is correct: $SERVER_IP"
+            echo "  3. SSH credentials are correct"
             echo "  4. Firewall allows SSH connections on Port 22"
             exit 1
         fi
@@ -482,38 +540,42 @@ echo "[Step 3/5] Auto-detect Server FQDN"
 echo "-----------------------------------------------------"
 echo
 
+# Temporarily disable set -e to prevent command substitution crash during FQDN probing
+set +e
+
 # Probe FQDN based on server OS or SMB connection
 SERVER_DNS=""
 if [[ "$SMB_CONNECTED" == "true" ]]; then
     # Grab anycert.conf via smbclient
-    if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}%${SMB_PASS}" -c "cd anycert; get anycert.conf /tmp/anycert_conf.tmp" >/dev/null 2>&1; then
-        SERVER_DNS=$(grep "^SERVER_FQDN=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n')
+    export PASSWD="$SMB_PASS"
+    if smbclient "//${SERVER_IP}/c$" -U "${SSH_USER}" -c "cd anycert; get anycert.conf /tmp/anycert_conf.tmp" >/dev/null 2>&1; then
+        SERVER_DNS=$(grep "^SERVER_FQDN=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROXY_PORTS=$(grep "^PROXY_PORTS=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n"')
-        REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n')
+        REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROFILE=$(grep "^PROFILE=" /tmp/anycert_conf.tmp | cut -d= -f2- | tr -d '\r\n"')
         rm -f /tmp/anycert_conf.tmp
     fi
+    unset PASSWD
 fi
 
 if [[ -z "$SERVER_DNS" ]]; then
-    if [[ "${SERVER_OS,,}" == "y" ]]; then
-        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'type C:\anycert\anycert.conf 2>nul' 2>/dev/null || true)
+    if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
+        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'type C:\anycert\anycert.conf 2>nul || true' 2>/dev/null || true)
     else
-        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null' 2>/dev/null || true)
+        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null || true' 2>/dev/null || true)
     fi
     if [[ -n "$REMOTE_CONF" ]]; then
-        SERVER_DNS=$(echo "$REMOTE_CONF" | grep "^SERVER_FQDN=" | cut -d= -f2- | tr -d '\r\n')
+        SERVER_DNS=$(echo "$REMOTE_CONF" | grep "^SERVER_FQDN=" | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROXY_PORTS=$(echo "$REMOTE_CONF" | grep "^PROXY_PORTS=" | cut -d= -f2- | tr -d '\r\n"')
-        REMOTE_PORT_OFFSET=$(echo "$REMOTE_CONF" | grep "^PORT_OFFSET=" | cut -d= -f2- | tr -d '\r\n')
+        REMOTE_PORT_OFFSET=$(echo "$REMOTE_CONF" | grep "^PORT_OFFSET=" | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROFILE=$(echo "$REMOTE_CONF" | grep "^PROFILE=" | cut -d= -f2- | tr -d '\r\n"')
     fi
     if [[ -z "$SERVER_DNS" ]]; then
-        if [[ "${SERVER_OS,,}" == "y" ]]; then
-            local comp_name
-            comp_name=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'echo %COMPUTERNAME%' 2>/dev/null | tr -d '\r\n' | xargs)
-                SERVER_DNS="${comp_name}"
+        if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
+            comp_name=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'echo %COMPUTERNAME% || true' 2>/dev/null | tr -d '\r\n' | xargs)
+            SERVER_DNS="${comp_name}"
         else
-            SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+            SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'hostname -f || hostname || true' 2>/dev/null | tr -d '\r\n' | xargs)
         fi
     fi
 fi
@@ -522,9 +584,10 @@ fi
 SERVER_DNS=$(echo "$SERVER_DNS" | tr -d '\r' | xargs)
 
 if [[ -z "$SERVER_DNS" ]]; then
-    echo "  [WARN] Auto-detect FQDN failed."
+    echo -e "  ${YELLOW}[WARN] Auto-detect FQDN failed.${RESET}"
+    echo -e "         ${YELLOW}(If connecting via non-root SSH user, please check if /etc/anycert/anycert.conf is readable [chmod 644] on the server)${RESET}"
     read -rp "  Please manually enter Server DNS Name (FQDN) [e.g. my-server.local]: " SERVER_DNS
-    [[ -z "$SERVER_DNS" ]] && { echo "[ERROR] DNS Name cannot be empty."; exit 1; }
+    [[ -z "$SERVER_DNS" ]] && { echo -e "${RED}[ERROR]${RESET} DNS Name cannot be empty."; exit 1; }
 fi
 
 echo "  [OK] Detected server DNS name: $SERVER_DNS"
@@ -536,6 +599,9 @@ if [[ -f "$INFO_FILE" ]]; then
 fi
 echo "$SERVER_IP $SERVER_DNS $CERT_FINGER" >> "$INFO_FILE"
 fi
+
+# Re-enable set -e for subsequent steps
+set -e
 
 echo "[Step 4/5] Update /etc/hosts file"
 echo "-----------------------------------------------------"
@@ -615,6 +681,10 @@ else
     echo "    https://${SERVER_IP}"
     echo "    (Run anycert.sh/bat on the server to configure Nginx SSL proxy ports)"
 fi
+echo -e "  ${YELLOW}[NOTE] If Chrome still shows 'Not Secure' after installation:${RESET}"
+echo -e "         1. Fully restart Chrome (visit ${CYAN}chrome://restart${RESET} in URL bar)."
+echo -e "         2. Ensure you have **regenerated the Root CA** on the server (select Y to"
+echo -e "            'Regenerate CA' when running anycert.sh/bat) to apply modern CA:true constraints."
 echo
 echo "  To uninstall, run: sudo bash anycert-linux.sh -u"
 echo

@@ -49,6 +49,9 @@ for cmd in ssh scp openssl security; do
 done
 
 mkdir -p "$DATA_DIR"
+if [[ -n "${SUDO_USER:-}" ]]; then
+    chown "$SUDO_USER" "$DATA_DIR"
+fi
 
 # ============================================================
 #  UNINSTALL MODE
@@ -280,55 +283,85 @@ echo "  Destination : $CA_LOCAL"
 echo
 
 # Try probing download paths based on server OS
+# scp is run as SUDO_USER (not root) so macOS Keychain / SSH agent is accessible.
+# Download to /tmp first (world-writable), then root copies to DATA_DIR.
+SCP_USER="${SUDO_USER:-$(whoami)}"
+TMP_CERT="/tmp/anycert-ca-download.crt"
+SCP_OK=false
 SMB_CONNECTED=false
 SMB_PASS=""
-if [[ "${SERVER_OS,,}" == "y" ]]; then
+
+if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
     # Windows server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
+    echo "  [INFO] Probing [/C:/anycert/anycert-ca.crt]..."
+    if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
+        SCP_OK=true
+    elif echo "  [INFO] Probing [/anycert/anycert-ca.crt]..." && \
+         sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
+        SCP_OK=true
+    elif echo "  [INFO] Probing legacy SCP mode [C:/anycert/anycert-ca.crt]..." && \
+         sudo -u "$SCP_USER" scp -O -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
+        SCP_OK=true
+    fi
+    
+    if [[ "$SCP_OK" != "true" ]]; then
         echo "  [INFO] SCP download failed. Probing Windows SMB share [C$]..."
-        
+        if [[ "$SSH_USER" != "administrator" && "$SSH_USER" != "Administrator" ]]; then
+            echo -e "  ${YELLOW}[NOTE] Windows UAC blocks custom accounts (like '$SSH_USER') from accessing C$ admin share remotely.${RESET}"
+            echo -e "         Please ensure OpenSSH is installed on the server, or use the built-in 'Administrator' account.${RESET}"
+        fi
         read -srp "  Enter password for ${SSH_USER} to connect via SMB: " SMB_PASS
         echo ""
         
-        local mount_dir="/tmp/anycert_smb_mount"
+        mount_dir="/tmp/anycert_smb_mount"
         mkdir -p "$mount_dir"
         
-        # Mount and copy
         if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
             if [[ -f "${mount_dir}/anycert/anycert-ca.crt" ]]; then
-                cp "${mount_dir}/anycert/anycert-ca.crt" "$CA_LOCAL"
+                cp "${mount_dir}/anycert/anycert-ca.crt" "$TMP_CERT"
                 echo "  [OK] CA certificate successfully copied via SMB Share!"
                 SMB_CONNECTED=true
             fi
             umount "$mount_dir" >/dev/null 2>&1
         fi
         rmdir "$mount_dir" >/dev/null 2>&1
-
-        if [[ "$SMB_CONNECTED" != "true" ]]; then
-            echo
-            echo "[ERROR] Certificate download failed! Please check:"
-            echo "  1. Server IP address is correct: $SERVER_IP"
-            echo "  2. SSH / SMB credentials are correct"
-            echo "  3. The server-side anycert.bat has been executed to generate the certificate"
-            echo "  4. Firewall allows SSH (Port 22) or SMB (Port 445)"
-            exit 1
-        fi
+    fi
+    
+    if [[ "$SMB_CONNECTED" != "true" && ! -s "$TMP_CERT" ]]; then
+        echo
+        echo -e "  ${RED}[ERROR]${RESET} Certificate download failed! Please check:"
+        echo -e "  ${YELLOW}1. The server-side anycert.bat has NOT been executed yet.${RESET}"
+        echo "     (This is the most common reason! You must run the server script first to generate certificates.)"
+        echo "  2. Server IP address is correct: $SERVER_IP"
+        echo "  3. SSH / SMB credentials are correct"
+        echo "  4. Firewall allows SSH (Port 22) or SMB (Port 445)"
+        exit 1
     fi
 else
     # Linux server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
-        echo "  [INFO] Linux default path failed. Probing backup path (/root/anycert/anycert-ca.crt)..."
-        if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
-            echo
-            echo "[ERROR] Certificate download failed! Please check:"
-            echo "  1. Server IP address is correct: $SERVER_IP"
-            echo "  2. SSH credentials are correct"
-            echo "  3. The server-side anycert.sh has been executed to generate the certificate"
-            echo "  4. Firewall allows SSH connections on Port 22"
-            exit 1
-        fi
+    echo "  [INFO] Probing [${CA_REMOTE}]..."
+    if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$TMP_CERT" 2>/dev/null; then
+        SCP_OK=true
+    elif echo "  [INFO] Probing backup path [/root/anycert/anycert-ca.crt]..." && \
+         sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
+        SCP_OK=true
+    fi
+    
+    if [[ "$SCP_OK" != "true" ]]; then
+        echo
+        echo -e "  ${RED}[ERROR]${RESET} Certificate download failed! Please check:"
+        echo -e "  ${YELLOW}1. The server-side anycert.sh has NOT been executed yet.${RESET}"
+        echo "     (This is the most common reason! You must run the server script first to generate certificates.)"
+        echo "  2. Server IP address is correct: $SERVER_IP"
+        echo "  3. SSH credentials are correct"
+        echo "  4. Firewall allows SSH connections on Port 22"
+        exit 1
     fi
 fi
+
+# Move from /tmp to final DATA_DIR destination
+cp "$TMP_CERT" "$CA_LOCAL"
+rm -f "$TMP_CERT"
 
 echo
 echo "  [OK] Certificate downloaded successfully!"
@@ -345,16 +378,19 @@ echo "[Step 3/5] Auto-detect Server FQDN"
 echo "-----------------------------------------------------"
 echo
 
+# Temporarily disable set -e to prevent command substitution crash during FQDN probing
+set +e
+
 # Probe FQDN based on server OS or SMB connection
 SERVER_DNS=""
 if [[ "$SMB_CONNECTED" == "true" ]]; then
-    local mount_dir="/tmp/anycert_smb_mount"
+    mount_dir="/tmp/anycert_smb_mount"
     mkdir -p "$mount_dir"
     if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
         if [[ -f "${mount_dir}/anycert/anycert.conf" ]]; then
-            SERVER_DNS=$(grep "^SERVER_FQDN=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n')
+            SERVER_DNS=$(grep "^SERVER_FQDN=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
             REMOTE_PROXY_PORTS=$(grep "^PROXY_PORTS=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
-            REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n')
+            REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
             REMOTE_PROFILE=$(grep "^PROFILE=" "${mount_dir}/anycert/anycert.conf" | cut -d= -f2- | tr -d '\r\n"')
         fi
         umount "$mount_dir" >/dev/null 2>&1
@@ -363,24 +399,23 @@ if [[ "$SMB_CONNECTED" == "true" ]]; then
 fi
 
 if [[ -z "$SERVER_DNS" ]]; then
-    if [[ "${SERVER_OS,,}" == "y" ]]; then
-        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'type C:\anycert\anycert.conf 2>nul' 2>/dev/null || true)
+    if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
+        REMOTE_CONF=$(sudo -u "$SCP_USER" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'type C:\anycert\anycert.conf 2>nul || true' 2>/dev/null || true)
     else
-        REMOTE_CONF=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null' 2>/dev/null || true)
+        REMOTE_CONF=$(sudo -u "$SCP_USER" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null || true' 2>/dev/null || true)
     fi
     if [[ -n "$REMOTE_CONF" ]]; then
-        SERVER_DNS=$(echo "$REMOTE_CONF" | grep "^SERVER_FQDN=" | cut -d= -f2- | tr -d '\r\n')
+        SERVER_DNS=$(echo "$REMOTE_CONF" | grep "^SERVER_FQDN=" | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROXY_PORTS=$(echo "$REMOTE_CONF" | grep "^PROXY_PORTS=" | cut -d= -f2- | tr -d '\r\n"')
-        REMOTE_PORT_OFFSET=$(echo "$REMOTE_CONF" | grep "^PORT_OFFSET=" | cut -d= -f2- | tr -d '\r\n')
+        REMOTE_PORT_OFFSET=$(echo "$REMOTE_CONF" | grep "^PORT_OFFSET=" | cut -d= -f2- | tr -d '\r\n"')
         REMOTE_PROFILE=$(echo "$REMOTE_CONF" | grep "^PROFILE=" | cut -d= -f2- | tr -d '\r\n"')
     fi
     if [[ -z "$SERVER_DNS" ]]; then
-        if [[ "${SERVER_OS,,}" == "y" ]]; then
-            local comp_name
-            comp_name=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'echo %COMPUTERNAME%' 2>/dev/null | tr -d '\r\n' | xargs)
-                SERVER_DNS="${comp_name}"
+        if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
+            comp_name=$(sudo -u "$SCP_USER" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'echo %COMPUTERNAME% || true' 2>/dev/null | tr -d '\r\n' | xargs)
+            SERVER_DNS="${comp_name}"
         else
-            SERVER_DNS=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}" 'hostname -f' 2>/dev/null || true)
+            SERVER_DNS=$(sudo -u "$SCP_USER" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}" 'hostname -f || hostname || true' 2>/dev/null | tr -d '\r\n' | xargs)
         fi
     fi
 fi
@@ -389,9 +424,10 @@ fi
 SERVER_DNS=$(echo "$SERVER_DNS" | tr -d '\r' | xargs)
 
 if [[ -z "$SERVER_DNS" ]]; then
-    echo "  [WARN] Auto-detect FQDN failed."
+    echo -e "  ${YELLOW}[WARN] Auto-detect FQDN failed.${RESET}"
+    echo -e "         ${YELLOW}(If connecting via non-root SSH user, please check if /etc/anycert/anycert.conf is readable [chmod 644] on the server)${RESET}"
     read -rp "  Please manually enter Server DNS Name (FQDN) [e.g. my-server.local]: " SERVER_DNS
-    [[ -z "$SERVER_DNS" ]] && { echo "[ERROR] DNS Name cannot be empty."; exit 1; }
+    [[ -z "$SERVER_DNS" ]] && { echo -e "${RED}[ERROR]${RESET} DNS Name cannot be empty."; exit 1; }
 fi
 
 echo "  [OK] Detected server DNS name: $SERVER_DNS"
@@ -404,6 +440,9 @@ if [[ -f "$INFO_FILE" ]]; then
 fi
 echo "$SERVER_IP $SERVER_DNS $CERT_FINGER_SHA1" >> "$INFO_FILE"
 fi
+
+# Re-enable set -e for subsequent steps
+set -e
 
 # ── Step 4 ───────────────────────────────────────────────
 echo "[Step 4/5] Update /etc/hosts file"
@@ -440,10 +479,13 @@ if security add-trusted-cert -d -r trustRoot \
        "$CA_LOCAL"; then
     echo "  [OK] CA certificate successfully imported and set to Always Trust!"
 else
-    echo "  [ERROR] Auto-import failed. Please install manually:"
-    echo "  1. Double click $CA_LOCAL or open Keychain Access"
+    echo -e "  ${RED}[ERROR]${RESET} Auto-import failed. Please install manually:"
+    if [[ -n "${SSH_CLIENT:-}" || -n "${SSH_TTY:-}" ]]; then
+        echo -e "          ${YELLOW}[NOTE] Detected SSH connection. macOS security policy prohibits trust settings modifications without a GUI session.${RESET}"
+    fi
+    echo -e "  1. Double click ${YELLOW}$CA_LOCAL${RESET} or open Keychain Access"
     echo "  2. Drag and drop the file into the System keychain"
-    echo "  3. Double click the certificate, expand Trust, and set 'When using this certificate' to 'Always Trust'"
+    echo -e "  3. Double click the certificate, expand Trust, and set 'When using this certificate' to ${GREEN}'Always Trust'${RESET}"
 fi
 echo
 

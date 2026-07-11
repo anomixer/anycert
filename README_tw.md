@@ -1,10 +1,10 @@
 ![anycert](pic/banner.svg)
 
-# anycert — 自託管伺服器 HTTPS 憑證管理器，每台用戶端都受信任。
+# anycert — 本機開發、私有網路與企業自架服務的受信 HTTPS 工具
 
-瀏覽器的私有伺服器憑證警告，永久消失。支援 Proxmox VE, OpenMediaVault, Unraid, LLM 伺服器, Nginx 等任何自託管伺服器。
+anycert 是一套跨平台憑證工具，適用於私有網路、homelab，以及企業自架部署。
 
-伺服器一個指令，每台用戶端一個指令 — 瀏覽器顯示鎖頭，十年內持續有效，完全離線運作，不需要任何公開網域。
+它會建立你自己的本機 CA，為 localhost 與內部主機簽發受信任的 HTTPS 憑證，並協助你部署到 Proxmox VE、OpenMediaVault、Unraid、Docker、Nginx 與 Node.js 服務上——全程離線，不需要公開網域。
 
 [English](README.md) | **繁體中文**
 
@@ -91,6 +91,22 @@
 
 ---
 
+## 💡 設計哲學：為什麼採用 Port 偏移，而不是子網域（Subdomain）分流？
+
+在團隊開發或內網測試中（**此設計專指選擇 Service Profile [1] 一鍵 Nginx SSL 代理模式的情境**），大家常問：「為什麼不直接用 `https://app1.demo.local`、`https://app2.demo.local` 都走預設的 `443` 埠，而是用 FQDN 加上不同 Port（如 `:13000`、`:16502`）來存取呢？」
+
+這其實是為了讓您徹底擺脫自建環境中最痛苦的**「Hosts 修正地獄」**：
+
+| 比較項目 | 方案 A：子網域分流 (走 443 埠) | 方案 B：Anycert 採用的 Port 偏移 (共用 FQDN) |
+| :--- | :--- | :--- |
+| **網址外觀** | 漂亮，如 `https://llmchat.demo.local` | 帶有埠號，如 `https://server.demo.local:13000` |
+| **新增服務時** | ❌ **每台 Client 電腦都要手動修改 `hosts` 檔**。每新開一個 Web 服務，全團隊每個人都要去改 `/etc/hosts` 新增對應域名，否則連 DNS 解析都過不了。 | ⚡ **Client 電腦終身免修改**！不論伺服器新開多少個 Web App，因為共用同一個 FQDN，所有 Client 只要第一天設定過，往後就能直接連線，零摩擦力。 |
+| **憑證管理** | ❌ 必須為每個新子網域簽發新憑證，或被迫維護繁瑣的 Wildcard 泛網域自建憑證。 | 🛡️ 伺服器憑證只需簽發一次並包含 IP SAN，Nginx 重新 reload 即可，管理成本近乎為零。 |
+
+**結論：自建內網開發環境最痛的不是記 Port 號，而是「無休止地幫 Client 端改 hosts 檔案」。Anycert 的 Port 偏移設計，是實現「一次設定，終身免重設」最實用、對 Lazy 仔最溫柔的解答。**
+
+---
+
 ## 安裝步驟
 
 ### 步驟一 — 在伺服器端執行 (產生憑證)
@@ -104,15 +120,19 @@ sudo bash anycert.sh
 ```
 腳本將會：
 1. 自動偵測 IP、主機名稱與 FQDN。您可以確認並**選擇性輸入額外的 IP 位址（以空白分隔）**，例如 Tailscale IP、VPN IP 或其他實體網路 IP，以一併寫入憑證的 SAN（主機別名）以及 Nginx 的 `server_name` 配置中。
-2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **3 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **4 個**）：
-    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended] (一鍵代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，引導您選擇要對外開通的服務，一鍵幫您裝好 Nginx，並建立 `HTTPS Port + 偏移量` 到 `HTTP Port` 的反向代理封裝（**偏移量預設為 10000，可自行設定**，如 `+1` / `+10` / `+443`，例如 `3000 → 13000`）。
-   - **Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
-   - **Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成 HTTPS 服務的環境）。
-   - **Generate Only [Painful / Hard Way]**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
+2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **4 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **5 個**）：
+    - **[1] Auto-Setup Nginx SSL Proxy [Single-Host] [Lazy-Friendly / Recommended] (單機代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，一鍵封裝本地 HTTP 連接埠至 `HTTPS Port + 偏移量`（**偏移量預設為 10000**，例如 `3000 -> 13000`）。
+    - **[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host] (獨立網關模式)**：專門用於獨立 VM 網關主機。免除本機 port 掃描，直接引導輸入後端 `IP:PORT` 清單，且**連接埠預設無偏移** (1-to-1 映射，例如後端服務是 `3000`，Gateway 上的 Nginx 就直接監聽 HTTPS `3000` 轉發)。
+    - **[3] Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成 HTTPS 服務的環境）。
+    - **[4] Generate Only [Painful / Hard Way]**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
+    - **[5] Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
 
-**各模式流量示意：**
+> 💡 **Tip (伺服器本機瀏覽器存取)**
+> 如果您希望該伺服器本機上執行的瀏覽器（例如伺服器自己要開瀏覽器存取本機 Nginx 的 HTTPS 代理）也能被受信任且無警告，您只需直接在該伺服器本機上執行一次「用戶端腳本」（`anycert-macos.sh` 或 `anycert-linux.sh`），並將 Server IP 填寫為 `127.0.0.1`，即可一併自動完成 hosts、Keychain 與 Chrome/Firefox 瀏覽器資料庫的信任設定！
 
-**Nginx 一鍵代理** — 適合純 HTTP 服務、多容器並存；App 維持原 HTTP Port，HTTPS 走 `Port + 偏移量`（預設 10000，可自訂）：
+**各模式流程示意：**
+
+**Profile [1] Nginx 一鍵代理** — 適合純 HTTP 服務、多容器並存；App 維持原 HTTP Port，HTTPS 走 `Port + 偏移量`（預設 10000，可自訂）：
 
 ```mermaid
 flowchart LR
@@ -122,8 +142,51 @@ flowchart LR
         NginxSSL --> AppHTTP
     end
 ```
+**Profile [2] Nginx SSL 閘道器** — 適合將本機作為專用 Gateway VM/LXC，上面只有 Nginx 服務，負責將流量解密後分流至內網**其他不同 IP 的伺服器**。此時預設無連接埠偏移（1-to-1 映射，例如後端服務是 `3000`，Gateway 上的 Nginx 就直接監聽 HTTPS `3000` 轉發）：
 
-**Custom Path** — 適合服務**本身已支援 HTTPS**（OMV、IIS、自架 Nginx 等）；憑證打入服務路徑後，以**原生 Port** 提供 HTTPS：
+```mermaid
+flowchart TD
+    subgraph LAN [內網區域]
+        Client["開發筆電 (Client)\n信任 CA & 綁定 Hosts\n(gateway.demo.local -> Host C)"]
+        
+        subgraph HostC["Host C: SSL Gateway (172.16.1.3)"]
+            Nginx["Nginx SSL 代理\n(anycert 憑證)"]
+        end
+        
+        subgraph HostA["Host A: PVE (172.16.1.1)"]
+            PVE["PVE Web (HTTP:8006)"]
+        end
+        
+        subgraph HostB["Host B: App Server (172.16.1.2)"]
+            OpenWebUI["Open WebUI (HTTP:3000)"]
+            Ollama["Ollama API (HTTP:11434)"]
+        end
+        
+        Client -- "https://gateway.demo.local:3000 (HTTPS)" --> Nginx
+        Client -- "https://gateway.demo.local:8006 (HTTPS)" --> Nginx
+        
+        Nginx -- "proxy_pass http://172.16.1.1:8006" --> PVE
+        Nginx -- "proxy_pass http://172.16.1.2:3000" --> OpenWebUI
+        Nginx -- "proxy_pass http://172.16.1.2:11434" --> Ollama
+    end
+```
+
+> 💡 **多主機部署範例 (沙盤推演)：**
+> 假設您的內網有 3 台機器：
+> * **Host A** (IP: `172.16.1.1`): 跑 PVE (`8006`)
+> * **Host B** (IP: `172.16.1.2`): 跑 Ollama (`11434`)、Open WebUI (`3000`)
+> * **Host C** (IP: `172.16.1.3`): 空主機，專門用作 **Nginx SSL Gateway**
+>
+> **部署步驟：**
+> 1. **伺服器端設定**：**只需在 Host C 上執行 `anycert.sh` 一次**。
+>    * 選擇選項 `[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]`。
+>    * 輸入後端列表：`172.16.1.1:8006 172.16.1.2:11434 172.16.1.2:3000`。
+>    * 預設連接埠偏移設為 `0`（1-to-1 直接轉發）。
+>    * 這樣，Host C 的 Nginx 會自動生成並監聽 HTTPS `3000`、`8006` 和 `11434` 埠，分別加密轉發至後端。
+> 2. **客戶端設定**：在您的工作筆電上執行用戶端腳本，Server IP 填寫 **Host C (Gateway) 的 IP** `172.16.1.3`。
+> 3. **結果**：您的筆電即可安全無警告地以 `https://gateway.demo.local:3000` 存取 Open WebUI、`https://gateway.demo.local:8006` 存取 PVE，全內網只需維護 Host C 的一張憑證！
+
+**Profile [3] Custom Path** — 適合服務**本身已支援 HTTPS**（OMV、IIS、自架 Nginx 等）；憑證打入服務路徑後，以**原生 Port** 提供 HTTPS：
 
 ```mermaid
 flowchart LR
@@ -135,7 +198,7 @@ flowchart LR
     end
 ```
 
-**Generate Only** — 只簽發並存檔，不自動部署；後續由使用者自行套用至各服務：
+**Profile [4] Generate Only** — 只簽發並存檔，不自動部署；後續由使用者自行套用至各服務：
 
 ```mermaid
 flowchart LR
@@ -146,7 +209,7 @@ flowchart LR
     end
 ```
 
-**Proxmox VE（僅 Linux PVE 顯示）** — 等同自動化的 Custom Path，直接覆蓋 `pveproxy` 憑證：
+**Profile [5] Proxmox VE（僅 Linux PVE 顯示）** — 等同自動化的 Custom Path，直接覆蓋 pveproxy 憑證：
 
 ```mermaid
 flowchart LR
@@ -220,42 +283,59 @@ sudo bash anycert-macos.sh
 
 ---
 
-## 部署範例 (自定義服務套用)
+## 部署範例
 
-### 1. Nginx 一鍵反向代理 (適用於多容器 / 多服務並存，最懶人推薦)
-若您在伺服器上同時跑了多個 HTTP 服務（例如：Ollama、Next.js、Vite、vLLM、OpenClaw 等），直接選擇 **Option 2 (Auto-Setup Nginx SSL Proxy)**：
-- 程式會掃描目前本機監聽的 TCP 連接埠（例如您目前正在運行的 `3000`、`5173` 等服務埠）並印出 [TIP] 提示。
+### 1. Nginx 一鍵反向代理（Service Profile [1] — Auto-Setup Nginx SSL Proxy）(推薦給同一台主機執行多個服務)
+若您在**同一台機器**上同時跑了多個 HTTP 服務（例如：Ollama、Next.js、Vite、OpenClaw），直接選擇 Service Profile [1] **Auto-Setup Nginx SSL Proxy**：
+- 程式會掃描目前本機監聽的 TCP 連接埠並印出 [TIP] 提示。
 - 輸入您要以 SSL 封裝的連接埠，Nginx 就會自動監聽對應的 `安全埠 (原本連接埠 + 偏移量，預設 10000，可自訂)`：
-  - `https://mysrv:13000` ➔ 轉發至本地 `http://localhost:3000` (Next.js app / LLMChat)
-  - `https://mysrv:15173` ➔ 轉發至本地 `http://localhost:5173` (Vite apps)
-  - `https://mysrv:17860` ➔ 轉發至本地 `http://localhost:7860` (Gradio apps)
-  - `https://mysrv:18000` ➔ 轉發至本地 `http://localhost:8000` (vLLM)
-  - `https://mysrv:18081` ➔ 轉發至本地 `http://localhost:8081` (MongoDB Web UI)
-  - `https://mysrv:19119` ➔ 轉發至本地 `http://localhost:9119` (hermes-agent)
+  - `https://mysrv:13000` ➔ 轉發至本地 `http://localhost:3000` (LLMChat / Next.js)
   - `https://mysrv:21434` ➔ 轉發至本地 `http://localhost:11434` (Ollama)
-  - `https://mysrv:28789` ➔ 轉發至本地 `http://localhost:18789` (OpenClaw)
-- 您**完全不需修改任何 Docker 容器或程式碼設定**，也無須在容器內啟用 HTTPS，全交給本機 Host 端 Nginx 在外層套上 SSL 憑證防護。
+  - `https://mysrv:17860` ➔ 轉發至本地 `http://localhost:7860` (Gradio app)
+- 您**完全不需修改任何 Docker 容器或程式碼設定**。Nginx 在外層套上 SSL 憑證防護。
 
-### 2. OpenMediaVault (OMV)
-OMV 預設的 nginx 憑證路徑通常位於 `/etc/ssl/certs/`，您可以將其覆蓋（Option 1）：
+### 2. Nginx SSL 閘道器（Service Profile [2] — Auto-Setup Nginx SSL Gateway）(獨立網關 / 多主機模式)
+此模式將您的機器變成**專用 Gateway VM/LXC**，負責解密 HTTPS 流量後轉發至內網中**其他不同 IP 的後端伺服器**。**預設無連接埠偏移** — Gateway 將 HTTPS 流量 **1-to-1** 映射至後端埠。直接輸入後端 `IP:PORT` 映射清單（腳本會跳過本機 port 掃描）：
+
+  - `https://gateway.demo.local:8006` ➔ 轉發至遠端 `http://172.16.1.1:8006`（Host A 上的 PVE Web）
+  - `https://gateway.demo.local:3000` ➔ 轉發至遠端 `http://172.16.1.2:3000`（Host B 上的 Open WebUI）
+  - `https://gateway.demo.local:11434` ➔ 轉發至遠端 `http://172.16.1.2:11434`（Host B 上的 Ollama API）
+  - `https://gateway.demo.local:8080` ➔ 轉發至遠端 `http://172.16.1.3:8080`（Host C 上的 Home Assistant）
+  - `https://gateway.demo.local:9090` ➔ 轉發至遠端 `http://172.16.1.4:9090`（Host D 上的 Prometheus）
+  - `https://gateway.demo.local:8443` ➔ 轉發至遠端 `http://172.16.1.5:8443`（Host E 上的 Kubernetes Dashboard）
+  - `https://gateway.demo.local:1880` ➔ 轉發至遠端 `http://172.16.1.6:1880`（Host F 上的 Node-RED）
+  - `https://gateway.demo.local:9000` ➔ 轉發至遠端 `http://172.16.1.7:9000`（Host G 上的 Portainer）
+- **僅 Gateway 主機需要 SSL 憑證** — 後端伺服器維持純 HTTP。用戶端只需連接 Gateway 的單一 FQDN `gateway.demo.local`，Gateway 即可路由至內網任何機器的任何埠。隨著基礎設施擴展，只需加入更多 `IP:PORT` 即可。
+
+> 💡 **多主機部署範例：**
+> 假設您有一台 Gateway（Host N）加上多台分散的伺服器：
+> * **Host A** (IP: `172.16.1.1`): 跑 PVE (`8006`)
+> * **Host B** (IP: `172.16.1.2`): 跑 Ollama (`11434`)、Open WebUI (`3000`)
+> * **Host C–G** (IP `172.16.1.3`–`172.16.1.7`): 各種專用伺服器（Home Assistant、Prometheus 等）
+> * **Host N** (IP: `172.16.1.100`): 空主機，專門用作 **Nginx SSL Gateway**
+>
+> *只需在 Host N (172.16.1.100) 上執行 `anycert.sh`* — 選擇選項 `[2]`，輸入完整後端列表（如 `172.16.1.1:8006 172.16.1.2:3000 172.16.1.3:8080 ...`），偏移量設為 `0`。然後在筆電上執行用戶端腳本，Server IP 填寫 Host N 的 IP `172.16.1.100`。您的筆電即可安全無警告地以 `https://gateway.demo.local:<port>` 存取所有服務。
+
+### 3. OpenMediaVault (OMV)（Service Profile [3] — Custom Path）
+OMV 預設的 nginx 憑證路徑通常位於 `/etc/ssl/certs/`，您可以選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/etc/ssl/certs/openmediavault-webgui.crt`
 - 金鑰目標路徑: `/etc/ssl/private/openmediavault-webgui.key`
 - 重啟指令: `systemctl restart nginx`
 
-### 3. Unraid
-Unraid 的 SSL 憑證位於 USB 隨身碟掛載路徑：
+### 4. Unraid（Service Profile [3] — Custom Path）
+Unraid 的 SSL 憑證位於 USB 隨身碟掛載路徑，選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/boot/config/ssl/certs/cert.pem`
 - 金鑰目標路徑: `/boot/config/ssl/certs/key.pem`
 - 重啟指令: `/etc/rc.d/rc.nginx reload`
 
-### 4. VMware ESXi
-ESXi 的 Web 控制台憑證存放於主機的固定路徑中，覆蓋即可（Option 1）：
+### 5. VMware ESXi（Service Profile [3] — Custom Path）
+ESXi 的 Web 控制台憑證存放於主機的固定路徑中，選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/etc/vmware/ssl/rui.crt`
 - 金鑰目標路徑: `/etc/vmware/ssl/rui.key`
 - 重啟指令: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
 
-### 5. Nginx 手動反向代理 (如各類 LLM 伺服器 / Open WebUI)
-您可以透過 Nginx 反向代理，為 `http://localhost:3000` (Open WebUI) 加上 HTTPS。
+### 6. Nginx 手動反向代理（Service Profile [4] — Generate Only）(如各類 LLM 伺服器 / Open WebUI)
+您可以透過 Nginx 反向代理，為 `http://localhost:3000` (如 Open WebUI) 加上 HTTPS。選擇 Service Profile [4] **Generate Only** 產生憑證檔案後，手動在 Nginx 設定檔中指定憑證路徑：
 在 Nginx 設定檔中：
 ```nginx
 server {
@@ -271,12 +351,20 @@ server {
     }
 }
 ```
-執行 `anycert.sh` 時輸入：
+各項路徑對應如下：
 - 憑證目標路徑: `/etc/nginx/ssl/anycert.crt`
 - 金鑰目標路徑: `/etc/nginx/ssl/anycert.key`
 - 重啟指令: `nginx -s reload`
 
-### 6. WSL (Windows Subsystem for Linux) 部署指引
+### 7. Proxmox VE（Service Profile [5] — Proxmox VE (PVE)）
+若您的伺服器為 Proxmox VE 系統，執行 `anycert.sh` 時腳本會自動偵測到 PVE 環境，並在 Service Profile 選單中多出 **[5] Proxmox VE (PVE)** 選項。選擇此選項後，腳本會自動：
+- 備份 PVE 現有的 Web 代理憑證（`/etc/pve/local/pveproxy-ssl.pem` 與 `pveproxy-ssl.key`）。
+- 將 anycert 簽發的憑證與金鑰覆蓋至 PVE 預設路徑。
+- 自動重啟 `pveproxy` 服務，立即生效。
+
+您無需手動輸入任何路徑或重啟指令，腳本會全自動完成 PVE Web 控制臺（`https://<ip>:8006`）的 HTTPS 憑證部署。
+
+### 8. WSL 部署指引（Service Profile [1] — Auto-Setup Nginx SSL Proxy）
 如果您的服務（如 Nginx, Docker 容器等）架設在 WSL 2 中，因為 WSL 2 是 Linux 系統，您應該**直接在 WSL 終端機內執行 Linux 伺服器指令**，而不是在 Windows 宿主機執行 `.bat`：
 1. 開啟您的 WSL 終端機 (如 Ubuntu/Debian)，直接執行：
    ```bash
@@ -284,7 +372,40 @@ server {
    ```
 2. 當 `anycert.sh` 偵測網路資訊並提示確認時：
    - **如果僅在 Windows 本機瀏覽器存取 WSL 服務**：直接沿用偵測到的 WSL 內部虛擬 IP 即可，並可直接透過 `localhost` 或 FQDN 存取。
-   - **如果需要開放區網內其他裝置連線至 WSL 服務**：請手動將 IP 修改輸入為 **Windows 宿主機的實體區網 IP**。這樣簽發出的憑證才會包含該實體 IP。隨後只需在 Windows 宿主機使用 `netsh` 設定埠號轉發（Port Forwarding）將流量轉入 WSL 即可。
+   - **如果需要開放區網內其他裝置連線至 WSL 服務**：請手動將 IP 修改輸入為 **Windows 宿主機的實體區網 IP**（例如 `192.168.1.100`）。這樣簽發出的憑證才會包含該實體 IP。隨後需在 Windows 宿主機設定網路對接或埠號轉發（Port Forwarding）將流量轉入 WSL。
+
+#### 區網內其他裝置如何連線至 WSL 2：
+WSL 2 預設採用隔離的 NAT 網路架構。若要允許相同區網下的其他裝置連入您的 WSL 服務，請選擇以下兩種方式之一進行設定：
+
+##### 方案 A：使用 Windows Portproxy 設定埠號轉發（適用於 NAT 模式）
+在 Windows 宿主機上以 **系統管理員權限** 開啟 PowerShell，並執行以下指令：
+```powershell
+# 1. 轉發 SSH Port 22 (供用戶端安裝腳本連線下載憑證與設定檔使用)
+netsh interface portproxy add v4tov4 listenport=22 listenaddress=0.0.0.0 connectport=22 connectaddress=您的WSL虛擬IP
+
+# 2. 轉發您的 HTTPS 服務 Port (以 16502 和 19999 為例)
+netsh interface portproxy add v4tov4 listenport=16502 listenaddress=0.0.0.0 connectport=16502 connectaddress=您的WSL虛擬IP
+netsh interface portproxy add v4tov4 listenport=19999 listenaddress=0.0.0.0 connectport=19999 connectaddress=您的WSL虛擬IP
+
+# 3. 在 Windows 防火牆中允許這些連接埠的外來連線
+netsh advfirewall firewall add rule name="WSL SSH Port" dir=in action=allow protocol=TCP localport=22
+netsh advfirewall firewall add rule name="WSL HTTPS Ports" dir=in action=allow protocol=TCP localport=16502,19999
+```
+*注意：WSL 2 的內部 IP 在每次 Windows 重開機後都會變動，IP 改變時需重新執行指令更新 `connectaddress`。*
+
+##### 方案 B：啟用 WSL 2 現代「鏡像網路模式」（最推薦，Windows 11 22H2+）
+鏡像模式會讓 WSL 2 直接共享 Windows 宿主機的實體網路介面，WSL 內運行的服務會直接監聽在 Windows 實體 IP 上，無須做任何 netsh 轉發設定，且重開機 IP 變動也不會失效！
+1. 按下 `Win + R`，輸入 `%userprofile%` 回車（開啟您的使用者資料夾）。
+2. 新增或編輯一個名為 `.wslconfig` 的檔案，加入以下設定：
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+3. 在 Windows 命令提示字元 (CMD) 執行 `wsl --shutdown` 徹底重啟 WSL，並重開 WSL 終端機。
+4. 在 Windows 防火牆中允許這些連接埠連入：
+   ```cmd
+   netsh advfirewall firewall add rule name="WSL Mirrored Ports" dir=in action=allow protocol=TCP localport=22,16502
+   ```
 
 > [!NOTE]
 > **關於 Windows 的實體網卡 IP 偵測**

@@ -1,10 +1,10 @@
 ![anycert](pic/banner.svg)
 
-# anycert — Self-Hosted HTTPS Certificate Manager, Trusted by Every Client
+# anycert — Trusted HTTPS for Local Dev, Private Networks, and Enterprise Self-Hosting
 
-Permanently eliminate browser certificate warnings for your self-hosted servers. Supports Proxmox VE, OpenMediaVault, Unraid, local LLM servers, Nginx, and any internal TLS/HTTPS service.
+anycert is a cross-platform certificate toolkit for private networks, homelabs, and enterprise self-hosted deployments.
 
-One command on the server, one command on each client. Get a green lock in your browser, valid for 10 years, fully offline, and requiring no public domains or DNS records.
+It creates your own local CA, issues trusted HTTPS certificates for localhost and internal hosts, and helps you deploy them across Proxmox VE, OpenMediaVault, Unraid, Docker, Nginx, and Node.js services — fully offline, with no public domain required.
 
 **English** | [繁體中文](README_tw.md)
 
@@ -91,6 +91,22 @@ Since the Root CA trusted by your clients remains unchanged, **when the server c
 
 ---
 
+## 💡 Design Philosophy: Why Port Offsetting instead of Subdomains?
+
+In team environments or local development (**specifically when using Service Profile [1] - Nginx SSL Proxy**), a common question is: "Why not map services to subdomains like `https://app1.demo.local` on port 443, instead of using a single FQDN with different ports (e.g., `:13000`, `:16502`)?"
+
+This is a deliberate design choice to save you and your team from the notorious **"Hosts Modification Hell"**:
+
+| Feature | Option A: Subdomain Routing (Port 443) | Option B: Anycert's Port Offsetting (Shared FQDN) |
+| :--- | :--- | :--- |
+| **URL Look** | Clean (e.g., `https://llmchat.demo.local`) | Contains port (e.g., `https://server.demo.local:13000`) |
+| **Adding a Service** | ❌ **Every developer/client machine must modify their `hosts` file**. Each new web service requires updating `/etc/hosts` on all client PCs, or DNS resolution will fail. | ⚡ **Clients never have to update again**! Because all services share the same FQDN, clients set up hosts once on Day 1, and can immediately connect to any new service on different ports. |
+| **Cert Management** | ❌ Requires issuing certificates for each subdomain, or managing complex self-signed Wildcard certs. | 🛡️ Single certificate containing IP SANs. Nginx reloads automatically. Setup overhead is zero. |
+
+**Conclusion: The biggest pain point in self-hosted development environments isn't remembering port numbers—it's updating hosts files on client machines. Anycert's Port Offsetting design is the most practical, zero-maintenance solution for lazy developers.**
+
+---
+
 ## Installation Steps
 
 ### Step 1 — On the Server (Generate Certs)
@@ -104,15 +120,19 @@ sudo bash anycert.sh
 ```
 The script will:
 1. Auto-detect your IP, hostname, and FQDN. You can confirm them and **optionally input additional space-separated IP addresses** (e.g. Tailscale IP, VPN IP, or other LAN IPs) to be included in the certificate's SAN (Subject Alternative Name) and Nginx's `server_name` rules.
-2. Let you choose a deployment profile (offers **3 options** on standard servers, and auto-detects Proxmox VE to offer **4 options**):
-    - **Auto-Setup Nginx SSL Proxy [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and builds HTTPS wrappers (`Port + offset` to `HTTP Port`). **The offset defaults to 10000 but is fully customizable** (e.g. `+1` / `+10` / `+443`, e.g. `3000 → 13000`).
-   - **Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
-   - **Custom Path**: Installs certs to custom target paths and runs a custom service reload command (for services that **already support native HTTPS**).
-   - **Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
+2. Let you choose a deployment profile (offers **4 options** on standard servers, and auto-detects Proxmox VE to offer **5 options**):
+    - **[1] Auto-Setup Nginx SSL Proxy [Single-Host] [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and wraps local HTTP ports into HTTPS (`Port + offset` to `HTTP Port`). **The offset defaults to 10000** (e.g. `3000 -> 13000`).
+    - **[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]**: Specifically for dedicated Gateway VMs/hosts. Bypasses local port scans, prompts for backend `IP:PORT` mappings, and **defaults to no port offset** (1-to-1 mapping, e.g., HTTPS `3000` proxies to backend `3000`).
+    - **[3] Custom Path**: Installs certs to custom target paths and runs a custom service reload command (for services that **already support native HTTPS**).
+    - **[4] Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
+   - **[5] Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
 
-**Traffic flow by profile:**
+> 💡 **Tip (Local Browser Access on Server)**
+> If you want the browser running on this server itself (e.g. to access local HTTPS wrappers on the server machine) to trust the CA, you do not need to look for server-side imports. You can simply run the client script (`anycert-macos.sh` or `anycert-linux.sh`) locally on this server. Specify `127.0.0.1` as the Server IP and select the local CA import option, and it will configure your hosts, Keychain, and Chrome/Firefox NSS databases automatically!
 
-**Nginx SSL Proxy** — Best for plain HTTP services or multi-container setups. Apps keep their HTTP port; HTTPS is served on `Port + offset` (defaults to 10000, customizable):
+**Workflow by profile:**
+
+**Profile [1] Nginx SSL Proxy** — Best for plain HTTP services or multi-container setups. Apps keep their HTTP port; HTTPS is served on `Port + offset` (defaults to 10000, customizable):
 
 ```mermaid
 flowchart LR
@@ -123,7 +143,51 @@ flowchart LR
     end
 ```
 
-**Custom Path** — Best when the service **already terminates HTTPS** (OMV, IIS, your own Nginx, etc.). Certs are copied in-place; clients use the **native port**:
+**Profile [2] Nginx SSL Gateway** — Best for setting up this machine as a dedicated Gateway VM/LXC running only Nginx, which decrypts HTTPS traffic and forwards it to **other servers with different IPs** in the LAN. By default, there is no port offset (1-to-1 mapping, e.g., Nginx listens on HTTPS `3000` and proxies to backend `3000` directly):
+
+```mermaid
+flowchart TD
+    subgraph LAN [Local Network Area]
+        Client["Client Laptop\nTrusts CA & Binds Hosts\n(gateway.demo.local -> Host C)"]
+        
+        subgraph HostC["Host C: SSL Gateway (172.16.1.3)"]
+            Nginx["Nginx SSL Proxy\n(anycert Certificate)"]
+        end
+        
+        subgraph HostA["Host A: PVE (172.16.1.1)"]
+            PVE["PVE Web (HTTP:8006)"]
+        end
+        
+        subgraph HostB["Host B: App Server (172.16.1.2)"]
+            OpenWebUI["Open WebUI (HTTP:3000)"]
+            Ollama["Ollama API (HTTP:11434)"]
+        end
+        
+        Client -- "https://gateway.demo.local:3000 (HTTPS)" --> Nginx
+        Client -- "https://gateway.demo.local:8006 (HTTPS)" --> Nginx
+        
+        Nginx -- "proxy_pass http://172.16.1.1:8006" --> PVE
+        Nginx -- "proxy_pass http://172.16.1.2:3000" --> OpenWebUI
+        Nginx -- "proxy_pass http://172.16.1.2:11434" --> Ollama
+    end
+```
+
+> 💡 **Multi-Host Deployment Example:**
+> Suppose you have 3 hosts in your local network:
+> * **Host A** (IP: `172.16.1.1`): Running PVE (`8006`)
+> * **Host B** (IP: `172.16.1.2`): Running Ollama (`11434`) and Open WebUI (`3000`)
+> * **Host C** (IP: `172.16.1.3`): A clean VM/host dedicated for **Nginx SSL Gateway**
+>
+> **Deployment Steps:**
+> 1. **Server Setup**: **Only run `anycert.sh` on Host C once**.
+>    * Choose Option `[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]`.
+>    * Enter the backend list: `172.16.1.1:8006 172.16.1.2:11434 172.16.1.2:3000`.
+>    * Keep the port offset at `0` (1-to-1 forwarding).
+>    * Nginx on Host C will now automatically listen on HTTPS ports `3000`, `8006`, and `11434` and encrypt-forward them to their backends.
+> 2. **Client Setup**: Run the client setup script on your work laptop, and specify **Host C's IP** `172.16.1.3` as the Server IP.
+> 3. **Result**: Your laptop can now securely access Open WebUI via `https://gateway.demo.local:3000` and PVE via `https://gateway.demo.local:8006` without warnings. Only Host C needs to manage the SSL certificate!
+
+**Profile [3] Custom Path** — Best when the service **already terminates HTTPS** (OMV, IIS, your own Nginx, etc.). Certs are copied in-place; clients use the **native port**:
 
 ```mermaid
 flowchart LR
@@ -135,7 +199,7 @@ flowchart LR
     end
 ```
 
-**Generate Only** — Issues and saves cert files only; you configure each service manually afterward:
+**Profile [4] Generate Only** — Issues and saves cert files only; you configure each service manually afterward:
 
 ```mermaid
 flowchart LR
@@ -146,7 +210,7 @@ flowchart LR
     end
 ```
 
-**Proxmox VE (Linux PVE only)** — Automated Custom Path; replaces `pveproxy` certs directly:
+**Profile [5] Proxmox VE (Linux PVE only)** — Automated Custom Path; replaces pveproxy certs directly:
 
 ```mermaid
 flowchart LR
@@ -220,42 +284,59 @@ Restart your browser and access your server securely via FQDN or IP:
 
 ---
 
-## Deployment Examples (Custom Paths)
+## Deployment Examples
 
-### 1. Nginx Automated Reverse Proxy (Recommended for multi-service environments)
-If you run multiple HTTP services concurrently (e.g., Ollama, Next.js, Vite, vLLM, OpenClaw, etc.), choose **Option 2 (Auto-Setup Nginx SSL Proxy)**:
-- The script automatically scans active listening TCP ports on the server (displaying currently running ports, such as `3000` or `5173`, as a tip) and lists them.
+### 1. Nginx Automated Reverse Proxy (Service Profile [1] — Auto-Setup Nginx SSL Proxy) (Recommended for single-host multi-service environments)
+If you run multiple HTTP services concurrently on the **same machine** (e.g., Ollama, Next.js, Vite, OpenClaw), choose **Service Profile [1] Auto-Setup Nginx SSL Proxy**:
+- The script automatically scans active listening TCP ports on the server and lists them as tips.
 - Enter the ports you wish to wrap in SSL. Nginx will automatically map them to `HTTPS Port + offset` (defaults to 10000, customizable):
-  - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (Next.js app / LLMChat)
-  - `https://mysrv:15173` ➔ proxies to local `http://localhost:5173` (Vite apps)
-  - `https://mysrv:17860` ➔ proxies to local `http://localhost:7860` (Gradio apps)
-  - `https://mysrv:18000` ➔ proxies to local `http://localhost:8000` (vLLM)
-  - `https://mysrv:18081` ➔ proxies to local `http://localhost:8081` (MongoDB Web UI)
-  - `https://mysrv:19119` ➔ proxies to local `http://localhost:9119` (hermes-agent)
+  - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (LLMChat / Next.js)
   - `https://mysrv:21434` ➔ proxies to local `http://localhost:11434` (Ollama)
-  - `https://mysrv:28789` ➔ proxies to local `http://localhost:18789` (OpenClaw)
-- **No changes to Docker containers or original app configurations are needed**, even if the services lack native HTTPS support. Nginx wraps them in TLS seamlessly on the host.
+  - `https://mysrv:17860` ➔ proxies to local `http://localhost:7860` (Gradio app)
+- **No changes to Docker containers or original app configurations are needed**. Nginx wraps them in TLS seamlessly on the host.
 
-### 2. OpenMediaVault (OMV)
-OMV uses Nginx to serve its Web UI. You can deploy certificates directly (Option 1):
+### 2. Nginx SSL Gateway（Service Profile [2] — Auto-Setup Nginx SSL Gateway）(Dedicated Gateway / Multi-Host)
+This profile turns your machine into a **dedicated Gateway VM/LXC** (Host N) that decrypts HTTPS traffic and forwards it to **other backend servers with different IPs** across your LAN. There is **no port offset by default** — the Gateway maps HTTPS traffic **1-to-1** to backend ports. Enter the backend `IP:PORT` mappings directly (the script skips local port scanning):
+
+  - `https://gateway.demo.local:8006` ➔ proxies to remote `http://172.16.1.1:8006` (PVE Web on Host A)
+  - `https://gateway.demo.local:3000` ➔ proxies to remote `http://172.16.1.2:3000` (Open WebUI on Host B)
+  - `https://gateway.demo.local:11434` ➔ proxies to remote `http://172.16.1.2:11434` (Ollama API on Host B)
+  - `https://gateway.demo.local:8080` ➔ proxies to remote `http://172.16.1.3:8080` (Home Assistant on Host C)
+  - `https://gateway.demo.local:9090` ➔ proxies to remote `http://172.16.1.4:9090` (Prometheus on Host D)
+  - `https://gateway.demo.local:8443` ➔ proxies to remote `http://172.16.1.5:8443` (Kubernetes Dashboard on Host E)
+  - `https://gateway.demo.local:1880` ➔ proxies to remote `http://172.16.1.6:1880` (Node-RED on Host F)
+  - `https://gateway.demo.local:9000` ➔ proxies to remote `http://172.16.1.7:9000` (Portainer on Host G)
+- **Backend servers stay on plain HTTP** — only the Gateway holds the SSL certificate. Clients connect to the single Gateway FQDN (`gateway.demo.local`); the Gateway routes to any machine on any port in your LAN. Just add more `IP:PORT` entries as your infrastructure grows.
+
+> 💡 **Multi-Host Deployment Example:**
+> Suppose you have a Gateway (Host N) plus many dedicated hosts around your LAN:
+> * **Host A** (IP: `172.16.1.1`): Running PVE (`8006`)
+> * **Host B** (IP: `172.16.1.2`): Running Ollama (`11434`) and Open WebUI (`3000`)
+> * **Host C–G** (IPs `172.16.1.3`–`172.16.1.7`): Various dedicated servers (Home Assistant, Prometheus, etc.)
+> * **Host N** (IP: `172.16.1.100`): A clean VM/host dedicated for **Nginx SSL Gateway**
+>
+> *Only run `anycert.sh` on Host N (172.16.1.100)* — choose Option `[2]`, enter the full backend list (e.g. `172.16.1.1:8006 172.16.1.2:3000 172.16.1.3:8080 ...`) with offset `0`. Then run the client script on your laptop pointing to Host N's IP (`172.16.1.100`). Your laptop can now securely access every service via `https://gateway.demo.local:<port>`.
+
+### 3. OpenMediaVault (OMV)（Service Profile [3] — Custom Path）
+OMV uses Nginx to serve its Web UI. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/ssl/certs/openmediavault-webgui.crt`
 - Key target path: `/etc/ssl/private/openmediavault-webgui.key`
 - Reload command: `systemctl restart nginx`
 
-### 3. Unraid
-Unraid stores its SSL certificate in the USB flash configuration (Option 1):
+### 4. Unraid（Service Profile [3] — Custom Path）
+Unraid stores its SSL certificate in the USB flash configuration. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/boot/config/ssl/certs/cert.pem`
 - Key target path: `/boot/config/ssl/certs/key.pem`
 - Reload command: `/etc/rc.d/rc.nginx reload`
 
-### 4. VMware ESXi
-ESXi hosts store their web console certificates in a fixed location. You can simply overwrite them (Option 1):
+### 5. VMware ESXi（Service Profile [3] — Custom Path）
+ESXi hosts store their web console certificates in a fixed location. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/vmware/ssl/rui.crt`
 - Key target path: `/etc/vmware/ssl/rui.key`
 - Reload command: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
 
-### 5. Nginx Manual Reverse Proxy (e.g., local LLM Server / Open WebUI)
-You can use Nginx manually as a reverse proxy to add HTTPS to local HTTP services like `http://localhost:3000` (Open WebUI).
+### 6. Nginx Manual Reverse Proxy (Service Profile [4] — Generate Only) (e.g., local LLM Server / Open WebUI)
+You can use Nginx manually as a reverse proxy to add HTTPS to local HTTP services like `http://localhost:3000` (e.g. Open WebUI). Choose Service Profile [4] **Generate Only** to generate the cert files, then manually reference them in your Nginx config:
 In your Nginx site config:
 ```nginx
 server {
@@ -271,12 +352,20 @@ server {
     }
 }
 ```
-In `anycert.sh` (Option 1), specify:
+The corresponding fields are:
 - Cert target path: `/etc/nginx/ssl/anycert.crt`
 - Key target path: `/etc/nginx/ssl/anycert.key`
 - Reload command: `nginx -s reload`
 
-### 6. WSL (Windows Subsystem for Linux) Deployment
+### 7. Proxmox VE（Service Profile [5] — Proxmox VE (PVE)）
+If your server is running Proxmox VE, `anycert.sh` will automatically detect the PVE environment and offer an extra **[5] Proxmox VE (PVE)** option in the Service Profile menu. Selecting this option will automatically:
+- Back up the existing PVE web proxy certificates (`/etc/pve/local/pveproxy-ssl.pem` and `pveproxy-ssl.key`).
+- Overwrite them with the anycert-issued certificate and key.
+- Restart the `pveproxy` service to apply changes immediately.
+
+No manual path input or restart command is needed — the script handles the entire PVE web console (`https://<ip>:8006`) HTTPS certificate deployment automatically.
+
+### 8. WSL Deployment（Service Profile [1] — Auto-Setup Nginx SSL Proxy）
 If your services (like Nginx or Docker containers) are running inside WSL 2, because WSL 2 is a Linux environment, you should **run the Linux server script directly inside the WSL terminal** instead of running the `.bat` file on the Windows host:
 1. Open your WSL terminal (e.g., Ubuntu/Debian) and run:
    ```bash
@@ -284,7 +373,40 @@ If your services (like Nginx or Docker containers) are running inside WSL 2, bec
    ```
 2. When `anycert.sh` prompts you to confirm network configurations:
    - **If you only want to access the WSL service from the local Windows host**: Just accept the default WSL private IP address, and access it via `localhost` or the FQDN.
-   - **If you need to access the WSL service from other devices on the LAN**: Manually change the IP address to the **physical LAN IP of your Windows host**. This ensures the issued certificate binds to the physical IP. You will then need to configure port forwarding (e.g., via `netsh interface portproxy`) on the Windows host to forward traffic to WSL.
+   - **If you need to access the WSL service from other devices on the LAN**: Manually change the IP address to the **physical LAN IP of your Windows host** (e.g., `192.168.1.100`). This ensures the issued certificate binds to the physical IP. You will then need to configure network routing or port forwarding on the Windows host to forward traffic to WSL.
+
+#### Connecting from Other LAN Devices to WSL 2:
+WSL 2 operates on an isolated NAT network by default. To allow other devices on the same physical LAN to access your WSL services, choose one of the following two options:
+
+##### Option A: Configure Port Forwarding via Windows Portproxy (For NAT mode)
+Open **PowerShell as Administrator** on your Windows host and run:
+```powershell
+# 1. Forward SSH Port 22 (for client downloader scripts to fetch certs & configs)
+netsh interface portproxy add v4tov4 listenport=22 listenaddress=0.0.0.0 connectport=22 connectaddress=YOUR_WSL_IP
+
+# 2. Forward your HTTPS application Ports (e.g., 16502 and 19999)
+netsh interface portproxy add v4tov4 listenport=16502 listenaddress=0.0.0.0 connectport=16502 connectaddress=YOUR_WSL_IP
+netsh interface portproxy add v4tov4 listenport=19999 listenaddress=0.0.0.0 connectport=19999 connectaddress=YOUR_WSL_IP
+
+# 3. Allow incoming traffic through Windows Defender Firewall
+netsh advfirewall firewall add rule name="WSL SSH Port" dir=in action=allow protocol=TCP localport=22
+netsh advfirewall firewall add rule name="WSL HTTPS Ports" dir=in action=allow protocol=TCP localport=16502,19999
+```
+*Note: Since WSL 2 virtual IP changes upon reboot, you will have to update the `connectaddress` when it changes.*
+
+##### Option B: Enable WSL 2 Mirrored Networking Mode (Easiest, Windows 11 22H2+)
+WSL 2 supports sharing the Windows host IP directly, making WSL services listen directly on the physical LAN IP without any portproxy setups.
+1. Open Windows Explorer, go to `%userprofile%` (your user folder).
+2. Create or edit a file named `.wslconfig` and add:
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
+   ```
+3. Restart WSL from CMD: `wsl --shutdown` and restart your WSL shell.
+4. Allow Ports in Windows Defender Firewall:
+   ```cmd
+   netsh advfirewall firewall add rule name="WSL Mirrored Ports" dir=in action=allow protocol=TCP localport=22,16502
+   ```
 
 > [!NOTE]
 > **About Physical Network IP Detection on Windows**

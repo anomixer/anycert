@@ -115,6 +115,36 @@
 
 ---
 
+### 階段 13：修復 WSL/非 Root 權限連線與 Port 漏失，解決 UTF-8/Big5 指紋編碼與 netsh 括號語法 Bug
+- **非 Root SSH 用戶端連線 Permission Denied 修正**：
+  * *問題*：當伺服器是 WSL/Linux 且使用者以非 root 帳號連線時，因 `/etc/anycert/anycert.conf` 權限預設為 `600`，用戶端無法讀取，進而導致 `SERVER_FQDN` 與 `PROXY_PORTS` 皆讀取為空。這在用戶端造成 FQDN 回退至 `hostname -f` (在 WSL 中為 Windows 電腦名 `.localdomain`)，且因無 Port 資訊致使 Available HTTPS URLs 列表漏失 `:16502` 等 SSL Ports。
+  * *修正*：在 `anycert.sh` 寫入 config 檔案後，**將權限修改為 `chmod 644` (所有人皆可讀)**。由於該檔案僅存放公開的 Port 與主機名等配置資訊而不含私鑰，此設定安全無虞。
+  * *修正*：在三端用戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`）的 FQDN Fallback 模組中，若偵測 FQDN 失敗，皆新增**黃色 `[WARN]` 提示說明**，引導非 root SSH 使用者去伺服器端檢查或修改 `anycert.conf` 的讀取權限。
+- **CA 憑證指紋亂碼與子 shell 變數展開 Bug 修正**：
+  * *問題*：中文 Windows 用戶端執行 `anycert-windows.bat` 時，`CA Fingerprint` 顯示為 `-dumpRO\C` 亂碼，且若遠端 config 讀取失敗時指紋更常出錯。
+  * *根因*：在 `for /f` 的 `' '` 單引號外部命令中，子 shell 預設不支援延遲展開變數 `!CA_LOCAL!`，導致 `certutil -dump` 實際拿到了字面字串 `"!CA_LOCAL!"` 並噴錯 `指定檔案找不到`。此時中文 `失敗` 二字在 UTF-8/Big5 轉碼衝突下被 `findstr` 匹配並解碼成了亂碼 `RO\C`。此外，`certutil -dump` 的輸出在中文語系下為 `憑證雜湊(sha1)`，原本的英文 `Cert Hash` 匹配規則根本無法在成功時抓到指紋。
+  * *修正*：改用**與系統語系無關且不依賴 `findstr` 的原生 `certutil -hashfile` 語法**，並以 `skip=1` 和第一筆鎖定獲取。同時，在單引號中以 `%CA_LOCAL%` 代替 `!CA_LOCAL!`，確保在進入子 shell 前路徑已正確展開成實體路徑。
+- **解決 netsh 防火牆命令在 if 括號內的語法截斷 Bug**：
+  * *問題*：在匯入 CA 提示確認後，執行 sshd 判斷時，CMD 解析器頻繁回報 `... was unexpected at this time.` 並崩潰。
+  * *根因*：在 `if ( ... )` 的括號區塊內部，執行 `netsh` 防火牆指令時包含了帶引號的規則名稱 `name="OpenSSH SSH Server (sshd)"`。由於雙引號內部的 `^` 逸出符號會失去作用，`^(sshd^)` 的右括號依然會被 CMD 解析器誤判為外層 `if` 的結束括號，進而使隨後的 `dir=in` 參數被當成 if 區塊外的垃圾指令而報錯。
+  * *修正*：**徹底將 OpenSSH 偵測與安裝流程進行「100% 物理扁平化」重構**！拿掉所有 SSHD 行程的 `if ( ... )` 括號控制，改用獨立單行 `if` 設定變數，並以原生 `goto` 標籤控制流程跳轉。如此一來，在物理上沒有任何括號包覆，徹底根治 `was unexpected` 崩潰問題。
+- **WSL 2 對外連線動態 netsh 提示**：
+  * *功能*：在 `anycert.sh` 中偵測當前作業系統是否在 WSL 2 容器中。當偵測到 WSL 且使用者設定的實體 IP 與 WSL 的虛擬 IP 不同時，Summary 結尾會依據使用者選定的 Nginx Proxy Ports，動態產生並印出對應的 Windows `netsh interface portproxy` 以及 `netsh advfirewall` 防火牆放行指令，使用者只需複製並在 Windows 宿主機貼上執行即可通訊，極致優化 WSL 對外連接埠轉介體驗。
+- **Windows 伺服器端 SMB 遠端存取 UAC 防禦**：為了解決 Windows 預設阻擋非內建 Administrator 帳號遠端存取 `C$` 共享資料夾的 UAC 限制，在 `anycert.bat` 新增了 `LocalAccountTokenFilterPolicy` 偵測與一鍵修復選項。
+- **跨平台 SFTP 絕對路徑相容性修復**：修復了 Linux/macOS 透過新版 `scp` (預設為 SFTP 協定) 下載 Windows 檔案時的路徑解析 Bug（將 `:C:/anycert` 改為絕對路徑 `:/C:/anycert`）。
+- **優化 `smbclient` 的密碼安全傳遞**：在 Linux 端使用 `PASSWD` 環境變數傳遞 SMB 密碼，避免密碼中的特殊字元在命令列中被截斷或被 Bash 二次展開。
+- **貼心的下載錯誤排查提示高亮**：在三端用戶端將「伺服器端尚未簽發憑證」作為第一優先排查點置頂並著色，防止執行順序顛倒導致的盲點。
+- **階段 14：macOS 伺服器端 Nginx 與 Homebrew 相容性、SFTP 下載優化與職責分離解耦**：
+  - **自動安裝與配置 Homebrew**：若 macOS 伺服器端缺少 Nginx，自動切換為登入使用者（`SUDO_USER`）身份下載並安裝 Homebrew。並將環境變數自動設定在當前進程與寫入使用者的 `~/.zprofile` 中。
+  - **解決 Homebrew Nginx 啟動權限與暫存目錄 Bug**：在 macOS 上寫入 Homebrew 的 `servers/anycert_proxy.conf` 設定，並自動建立 `var/run/nginx` 與 `var/log/nginx` 暫存目錄並將 Owner 歸給使用者，解決 `mkdir() failed` 導致的配置檢測失敗。
+  - **Nginx 錯誤高亮捕捉**：重構 `nginx -t` 的檢測，若出錯時會在終端機直接印出 stderr 詳細日誌，方便秒級除錯。
+  - **三端 Windows 用戶下載 SFTP 優化**：將 macOS 與 Linux 用戶端針對 Windows 伺服器的下載流程優化為：`SUDO_USER` 下的 `scp` 路徑探測（解決 root 跑 scp 讀不到本機 Keychain 的問題）並以 `/C:/anycert/...` 作為優先探測路徑。
+  - **Server-Client 職責分離解耦**：在 `anycert.sh` 中回退了複雜的本地 hosts 寫入與 NSS DB 導入邏輯，簡化維護。改為在 Trust 流程結束時給予明確提示：若伺服器本機需要瀏覽器安全連線（Local Browser Access），只需以 `127.0.0.1` 為目標 IP 直接在伺服器上執行 `anycert-macos.sh` 或 `anycert-linux.sh` 客戶端安裝腳本即可。
+  - **Root CA 規格加固與 Chrome Root Store 相容性**：在 `anycert.sh` 與 `anycert.bat` 生成 Root CA 時，明確使用 openssl 設定檔注入 `basicConstraints = critical, CA:true` 和 `keyUsage = critical, keyCertSign, cRLSign` 延伸屬性，強制讓憑證在 RFC 標準上具備 Root CA 的合法簽署屬性，從根本上解決了 Ubuntu 26.04 上新版 Google Chrome (Chrome Root Store 機制) 無法信任本地 CA 簽發憑證的相容性問題。
+  - **Linux 用戶端 Chrome Modern NSSDB 支援**：在 `anycert-linux.sh` 新增對 Chrome M146+ 新版 NSS 共用資料庫路徑 `~/.local/share/pki/nssdb` 的自動偵測與導入/清理支援，並在終端機加上 Verbose Debug Log（自動顯示 `certutil -L` 狀態）以利排查。搭配徹底重設 Chrome 後，完美在 Ubuntu 26.04 Chrome 亮起安全鎖頭。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本
@@ -143,20 +173,22 @@
 
 ## 🧪 平台交叉測試對比表
 
-用於記錄各腳本在各個平台上的實際測試與支援狀態。（`v` 代表測試通過，`x` 代表不支援，空白代表待測試）
+用於記錄各腳本在各個平台上的實際測試與支援狀態。（✅ 代表測試通過，❌ 代表不支援，⚠️ 代表不適用，`空白` 代表待測試）
 
 ### 1. 伺服器端部署 (Server Setup)
-| 腳本名稱 / 平台 | Windows | Linux | macOS | WSL |
-| :--- | :---: | :---: | :---: | :---: |
-| `anycert.bat` | v | x | x | x |
-| `anycert.sh` | x | | | |
+| 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `anycert.???`        | .bat  | .sh | .sh  | .sh | .sh |
+| -> server setup      |  ✅  | ✅ |  ✅  | ✅ | ✅ |
+| local browser access |  ✅  | ✅ |  ✅  | ✅ |⚠️|
+| -> client setup?     |  ✅  | ✅ |  ✅  | ✅ |⚠️|
 
 ### 2. 用戶端信任導入 (Client Setup)
-| 腳本名稱 / 平台 | Windows | Linux | macOS | WSL |
-| :--- | :---: | :---: | :---: | :---: |
-| `anycert-linux.sh` | x | | | |
-| `anycert-macos.sh` | x | | | |
-| `anycert-windows.bat` | v | x | x | x |
+| 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `anycert-linux.sh`    |  ✅  | ✅ |  ✅  | ✅ | ✅ |
+| `anycert-macos.sh`    |  ✅  | ✅ |  ✅  | ✅ | ✅ |
+| `anycert-windows.bat` |  ✅  | ✅ |  ✅  | ✅ | ✅ |
 
 ---
 

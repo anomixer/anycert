@@ -196,20 +196,20 @@ echo.
 :: Path probing by OS selection
 set SMB_CONNECTED=0
 
-if /i "!SERVER_OS!"=="y" goto scp_windows
+if /i "!SERVER_OS!"=="y" goto probe_windows_ca
 
-:: Otherwise, try Linux paths
-scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:!CA_REMOTE!" "!CA_LOCAL!"
+:: Linux Server Branch
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:!CA_REMOTE!" "!CA_LOCAL!"
 if !errorlevel! equ 0 goto scp_ok
 
 echo   [INFO] Linux default path download failed. Probing backup path [/root/anycert/anycert-ca.crt]...
-scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!"
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!"
 if !errorlevel! equ 0 goto scp_ok
 goto scp_failed
 
-:scp_windows
-echo   [INFO] Probing Windows server path [C:/anycert/anycert-ca.crt]...
-scp -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!:C:/anycert/anycert-ca.crt" "!CA_LOCAL!"
+:probe_windows_ca
+:: Windows Server Branch
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/C:/anycert/anycert-ca.crt" "!CA_LOCAL!"
 if !errorlevel! equ 0 goto scp_ok
 
 echo   [INFO] SCP download failed. Probing Windows SMB share [C$]...
@@ -219,17 +219,17 @@ if !errorlevel! neq 0 goto scp_failed
 
 copy /y "\\!SERVER_IP!\c$\anycert\anycert-ca.crt" "!CA_LOCAL!" >nul 2>&1
 if not exist "!CA_LOCAL!" goto scp_failed
-
 set SMB_CONNECTED=1
 echo   [OK] CA certificate successfully copied via SMB Share!
 goto scp_ok
 
 :scp_failed
 echo.
-echo [ERROR] Certificate download failed! Please check:
-echo   1. Server IP address is correct: !SERVER_IP!
-echo   2. SSH credentials are correct
-echo   3. The server-side anycert.sh or anycert.bat has been executed to generate the certificate
+echo   !RED![ERROR]!RESET! Certificate download failed! Please check:
+echo   !YELLOW!1. The server-side anycert.sh (Linux/WSL) or anycert.bat (Windows) has NOT been executed yet.!RESET!
+echo      (This is the most common reason! You must run the server script first to generate certificates.)
+echo   2. Server IP address is correct: !SERVER_IP!
+echo   3. SSH credentials are correct
 echo   4. Firewall allows SSH connections on Port 22
 echo.
 pause
@@ -278,9 +278,9 @@ if "!SMB_CONNECTED!"=="1" (
 :: If not yet fetched, try via SSH
 if "!SERVER_DNS!"=="" (
     if /i "!SERVER_OS!"=="y" (
-        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "type C:\anycert\anycert.conf" > "!DATA_DIR!\conf.tmp" 2>nul
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!" "type C:\anycert\anycert.conf" > "!DATA_DIR!\conf.tmp" 2>nul
     ) else (
-        ssh -o StrictHostKeyChecking=no "!SSH_USER!@!SERVER_IP!" "cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null" > "!DATA_DIR!\conf.tmp" 2>nul
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!" "cat /etc/anycert/anycert.conf 2>/dev/null || cat ~/anycert/anycert.conf 2>/dev/null" > "!DATA_DIR!\conf.tmp" 2>nul
     )
     if exist "!DATA_DIR!\conf.tmp" (
         echo   [INFO] Parsing remote config file via SSH...
@@ -327,7 +327,8 @@ if "!SERVER_DNS!"=="" goto dns_fallback
 goto dns_ok
 
 :dns_fallback
-echo   [WARN] Auto-detect FQDN failed.
+echo   !YELLOW![WARN]!RESET! Auto-detect FQDN failed.
+echo          (If connecting via non-root SSH user, please check if /etc/anycert/anycert.conf is readable [chmod 644] on the server)
 set /p SERVER_DNS=  Please manually enter Server DNS Name (FQDN) [e.g. my-server.local]: 
 if "!SERVER_DNS!"=="" (
     echo [ERROR] DNS Name cannot be empty.

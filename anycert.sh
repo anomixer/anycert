@@ -19,6 +19,12 @@ SERVER_KEY="${CONF_DIR}/anycert-server.key"
 SERVER_CRT="${CONF_DIR}/anycert-server.crt"
 
 PORT_OFFSET=10000
+WSL_INTERNAL_IP=""
+SUGGESTED_EXTRA=""
+IS_WSL=false
+if grep -qE "(Microsoft|microsoft|WSL)" /proc/sys/kernel/osrelease 2>/dev/null; then
+  IS_WSL=true
+fi
 
 banner() {
   echo -e "${YELLOW} █████╗ ███╗   ██╗██╗   ██╗ ██████╗███████╗██████╗ ████████╗${RESET}"
@@ -59,6 +65,8 @@ check_root() {
   fi
 }
 
+BREW_CMD=""
+
 detect_os() {
   OS_TYPE=$(uname -s)
   if [[ "$OS_TYPE" == "Linux" ]]; then
@@ -67,6 +75,16 @@ detect_os() {
   elif [[ "$OS_TYPE" == "Darwin" ]]; then
     IS_LINUX=false
     IS_MAC=true
+    
+    # Resolve brew path for macOS (handles PATH difference under sudo)
+    local RUN_USER="${SUDO_USER:-$(whoami)}"
+    if sudo -u "$RUN_USER" command -v brew &>/dev/null; then
+      BREW_CMD=$(sudo -u "$RUN_USER" command -v brew)
+    elif [[ -x "/opt/homebrew/bin/brew" ]]; then
+      BREW_CMD="/opt/homebrew/bin/brew"
+    elif [[ -x "/usr/local/bin/brew" ]]; then
+      BREW_CMD="/usr/local/bin/brew"
+    fi
   else
     die "Unsupported operating system: $OS_TYPE"
   fi
@@ -182,14 +200,34 @@ do_uninstall() {
     fi
   elif [[ "${PROFILE:-none}" == "nginx_proxy" ]]; then
     local NGINX_CONF="/etc/nginx/conf.d/anycert_proxy.conf"
+    if $IS_MAC; then
+      local BREW_PREFIX
+      BREW_PREFIX=$([[ -n "$BREW_CMD" ]] && "$BREW_CMD" --prefix 2>/dev/null || echo "/opt/homebrew")
+      NGINX_CONF="${BREW_PREFIX}/etc/nginx/servers/anycert_proxy.conf"
+    fi
     if [[ -f "$NGINX_CONF" ]]; then
       info "Removing Nginx proxy configuration file..."
       rm -f "$NGINX_CONF"
       ok "Nginx proxy configuration file removed."
       
-      if systemctl is-active --quiet nginx 2>/dev/null; then
+      local NGINX_RUNNING=false
+      if $IS_MAC; then
+        if ps ax | grep -v grep | grep -q nginx; then
+          NGINX_RUNNING=true
+        fi
+      else
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+          NGINX_RUNNING=true
+        fi
+      fi
+
+      if $NGINX_RUNNING; then
         info "Reloading Nginx daemon..."
-        systemctl reload nginx || true
+        if $IS_MAC; then
+          nginx -s reload || true
+        else
+          systemctl reload nginx || true
+        fi
         ok "Nginx reloaded."
       fi
     fi
@@ -219,6 +257,16 @@ detect_server_info() {
     SERVER_IP=$(ipconfig getifaddr "$(route -n get default 2>/dev/null | awk '/interface:/ {print $2}')" 2>/dev/null || true)
     [[ -z "$SERVER_IP" ]] && SERVER_IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1 || true)
   fi
+  WSL_INTERNAL_IP="$SERVER_IP"
+  if [[ "$IS_WSL" == "true" ]]; then
+    if command -v powershell.exe &>/dev/null; then
+      local win_ip
+      win_ip=$(powershell.exe -NoProfile -Command "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Get-NetIPAddress | ? AddressFamily -eq IPv4)[0].IPAddress" 2>/dev/null | tr -d '\r\n' || true)
+      if [[ -n "$win_ip" && "$win_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        SUGGESTED_EXTRA="$win_ip"
+      fi
+    fi
+  fi
 
   SERVER_HOSTNAME=$(hostname -s)
   SERVER_FQDN=$(hostname -f 2>/dev/null || echo "${SERVER_HOSTNAME}.local")
@@ -239,7 +287,12 @@ confirm_info() {
   [[ -n "$INPUT_IP" ]] && SERVER_IP="$INPUT_IP"
   echo "  (Tip: enter multiple IPs separated by spaces, e.g. 192.168.1.10 100.64.1.2)"
 
-  read -rp "  Additional IP Addresses (optional, space-separated, e.g. Tailscale/VPN IPs): " EXTRA_IPS
+  if [[ -n "$SUGGESTED_EXTRA" ]]; then
+    read -rp "  Additional IP Addresses (optional, space-separated) [${SUGGESTED_EXTRA}]: " EXTRA_IPS
+    [[ -z "$EXTRA_IPS" ]] && EXTRA_IPS="$SUGGESTED_EXTRA"
+  else
+    read -rp "  Additional IP Addresses (optional, space-separated, e.g. Tailscale/VPN IPs): " EXTRA_IPS
+  fi
 
   read -rp "  Server DNS Name (FQDN) [${SERVER_FQDN}]: " INPUT_FQDN
   [[ -n "$INPUT_FQDN" ]] && SERVER_FQDN="$INPUT_FQDN"
@@ -248,7 +301,7 @@ confirm_info() {
 }
 
 detect_listening_ports() {
-  echo -e "  Scanning local ports, please wait..." >&2
+  echo -e "  Scanning local HTTP ports, please wait..." >&2
   local ports=""
   if command -v ss &>/dev/null; then
     ports=$(ss -tln | awk 'NR>1 {print $4}' | awk -F: '{print $NF}' 2>/dev/null)
@@ -285,9 +338,14 @@ resolve_ssl_port() {
 
   while true; do
     local collided=0
-    for OP in ${PROXY_PORTS}; do
-      if [[ $SSL_P -eq $OP ]]; then collided=1; break; fi
-    done
+    # Only collision check with proxy ports if NOT in gateway mode with offset=0
+    if [[ "$PROFILE" != "nginx_gateway" || $PORT_OFFSET -ne 0 ]]; then
+      for M in ${PROXY_PORTS}; do
+        local OP
+        OP=$(echo "$M" | cut -d: -f1)
+        if [[ $SSL_P -eq $OP ]]; then collided=1; break; fi
+      done
+    fi
     if [[ $collided -eq 0 ]]; then
       local i
       for ((i = 0; i < ${#ASSIGNED_SSL_PORTS[@]}; i++)); do
@@ -309,6 +367,36 @@ resolve_ssl_port() {
   echo "$SSL_P"
 }
 
+prompt_gateway_inputs() {
+  local list=()
+  while true; do
+    read -rp "  Please enter backend services to proxy (format: IP:PORT, space-separated, e.g. 172.16.1.5:3000 172.16.1.6:8080): " INPUT_MAPS
+    if [[ -z "$INPUT_MAPS" ]]; then
+      warn "You must specify at least one backend service!"
+      continue
+    fi
+
+    local ok=true
+    local item_list=()
+    for ITEM in ${INPUT_MAPS}; do
+      if [[ "$ITEM" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]]; then
+        local IP=$(echo "$ITEM" | cut -d: -f1)
+        local PORT=$(echo "$ITEM" | cut -d: -f2)
+        item_list+=("${PORT}:${IP}")
+      else
+        error "Invalid mapping format: $ITEM (should be IP:PORT)"
+        ok=false
+        break
+      fi
+    done
+
+    if $ok; then
+      PROXY_PORTS="${item_list[*]}"
+      break
+    fi
+  done
+}
+
 choose_profile() {
   echo -e "${BOLD}Please choose the Service Profile to apply:${RESET}"
   
@@ -316,7 +404,9 @@ choose_profile() {
   local desc=()
 
   opts+=("nginx_proxy")
-  desc+=("Auto-Setup Nginx SSL Proxy (Port-Offset Wrapper) [Lazy-Friendly / Recommended]\n      - Installs Nginx and automatically wraps your HTTP ports in SSL\n      - Keeps your existing apps running on HTTP, proxies to SSL Port + ${PORT_OFFSET} (configurable)\n")
+  desc+=("Auto-Setup Nginx SSL Proxy [Single-Host] [Lazy-Friendly / Recommended]\n      - Installs Nginx and automatically wraps your local HTTP ports in SSL\n      - Keeps your existing apps running on HTTP, proxies to SSL Port + ${PORT_OFFSET} (configurable)\n")
+  opts+=("nginx_gateway")
+  desc+=("Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]\n      - Installs Nginx on this dedicated host to proxy services running on other backend servers\n      - Maps HTTPS ports 1-to-1 to backend ports (no offset by default)\n")
   opts+=("custom")
   desc+=("Custom Path (Auto-Deploy)\n      - Copies certificates to your service folders (e.g. Nginx, Apache, Home Assistant, OpenMediaVault, Unraid, Docker, etc.)\n      - Can automatically run a reload command to apply changes\n")
   opts+=("none")
@@ -326,7 +416,7 @@ choose_profile() {
   if $IS_LINUX && [[ -d "/etc/pve" ]]; then
     opts+=("pve")
     desc+=("Proxmox VE (PVE Proxy)\n      - Automatically replaces PVE's web proxy certificate\n      - Restarts pveproxy to apply immediately\n")
-    default_choice="4"
+    default_choice="5"
   fi
 
   for i in "${!opts[@]}"; do
@@ -459,6 +549,83 @@ choose_profile() {
     done
     echo ""
   fi
+
+  if [[ "$PROFILE" == "nginx_gateway" ]]; then
+    echo -e "${YELLOW}Automated Nginx SSL Gateway Settings:${RESET}"
+    PORT_OFFSET=0
+
+    local EXISTING_PORTS=""
+    if [[ -f "$CONF_FILE" ]]; then
+      EXISTING_PORTS=$(grep '^PROXY_PORTS=' "$CONF_FILE" | cut -d= -f2- | tr -d '"')
+    fi
+
+    if [[ -n "$EXISTING_PORTS" ]]; then
+      echo "  You already have these gateway mappings:"
+      for M in $EXISTING_PORTS; do
+        local P=$(echo "$M" | cut -d: -f1)
+        local BIP=$(echo "$M" | cut -d: -f2)
+        echo "    HTTPS :$P -> http://$BIP:$P"
+      done
+      echo ""
+      echo "  What do you want to do?"
+      echo "    [1] Keep them as-is (Default)"
+      echo "    [2] Add more gateway mappings"
+      echo "    [3] Remove some mappings"
+      echo "    [4] Start over with a new list"
+      echo ""
+
+      local port_opt=""
+      while true; do
+        read -rp "  Please choose [1-4, default: 1]: " port_opt
+        port_opt=${port_opt:-1}
+        if [[ "$port_opt" =~ ^[1-4]$ ]]; then
+          break
+        fi
+        warn "Invalid choice, please try again."
+      done
+
+      if [[ "$port_opt" == "1" ]]; then
+        PROXY_PORTS="$EXISTING_PORTS"
+      elif [[ "$port_opt" == "2" ]]; then
+        read -rp "  Enter extra mappings to add (format: IP:PORT, space-separated, e.g. 172.16.1.5:3000): " NEW_MAPS
+        local NEW_MAPPED_PORTS=""
+        for ITEM in $NEW_MAPS; do
+          if [[ "$ITEM" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]]; then
+            local IP=$(echo "$ITEM" | cut -d: -f1)
+            local PORT=$(echo "$ITEM" | cut -d: -f2)
+            NEW_MAPPED_PORTS="$NEW_MAPPED_PORTS ${PORT}:${IP}"
+          else
+            warn "Invalid format: $ITEM. Skipping."
+          fi
+        done
+        PROXY_PORTS=$(echo "$EXISTING_PORTS $NEW_MAPPED_PORTS" | tr ' ' '\n' | awk -F: 'NF && !seen[$1]++' | tr '\n' ' ' | xargs)
+      elif [[ "$port_opt" == "3" ]]; then
+        read -rp "  Enter ports to remove from gateway (space-separated): " REMOVE_PORTS
+        PROXY_PORTS=$(echo "$EXISTING_PORTS" | tr ' ' '\n' | awk -F: -v rem="$REMOVE_PORTS" 'BEGIN{split(rem,a," ")} {ok=1; for(i in a) if(a[i]==$1) ok=0; if(ok) print $0}' | tr '\n' ' ' | xargs)
+      elif [[ "$port_opt" == "4" ]]; then
+        prompt_gateway_inputs
+      fi
+    else
+      prompt_gateway_inputs
+    fi
+
+    sanitize_proxyports
+
+    echo -e "  ${CYAN}HTTPS (SSL) port offset${RESET}"
+    echo -e "    The HTTPS port for each service = HTTP port + offset."
+    echo -e "    For Gateway, default is 0 (e.g. 3000 -> 3000, 1-to-1 directly)."
+    echo -e "    You may enter a custom offset (e.g. 10000) or leave blank for default (0)."
+    while true; do
+      read -rp "  Enter HTTPS port offset [default: 0]: " INPUT_OFFSET
+      INPUT_OFFSET=${INPUT_OFFSET:-0}
+      if [[ "$INPUT_OFFSET" =~ ^[0-9]+$ ]] && [ "$INPUT_OFFSET" -ge 0 ] && [ "$INPUT_OFFSET" -le 65535 ]; then
+        PORT_OFFSET=$INPUT_OFFSET
+        break
+      fi
+      warn "Invalid offset, please enter a number between 0 and 65535."
+    done
+    echo ""
+  fi
 }
 
 ask_proceed() {
@@ -474,6 +641,18 @@ ask_proceed() {
   elif [[ "$PROFILE" == "nginx_proxy" ]]; then
     echo "  3. Install Nginx if missing, and configure it as an SSL wrapper for ports:"
     echo "     ${PROXY_PORTS} (SSL ports: Original + ${PORT_OFFSET})"
+    echo "  4. Start or reload Nginx to apply changes"
+  elif [[ "$PROFILE" == "nginx_gateway" ]]; then
+    echo "  3. Install Nginx if missing, and configure it as an SSL Gateway for mappings:"
+    # Temporarily reset ASSIGNED_SSL_PORTS to avoid duplicates during preview
+    ASSIGNED_SSL_PORTS=()
+    for M in ${PROXY_PORTS}; do
+      local P=$(echo "$M" | cut -d: -f1)
+      local BIP=$(echo "$M" | cut -d: -f2)
+      local SSL_P
+      SSL_P=$(resolve_ssl_port "$P")
+      echo "     HTTPS :${SSL_P} -> http://${BIP}:${P}"
+    done
     echo "  4. Start or reload Nginx to apply changes"
   elif [[ "$PROFILE" == "custom" ]]; then
     echo "  3. Copy certificates to custom paths:"
@@ -505,10 +684,30 @@ generate_ca() {
 
   info "Generating Root CA..."
   openssl genrsa -out "$CA_KEY" 4096 2>/dev/null
+  local ca_conf
+  ca_conf=$(mktemp)
+  cat > "$ca_conf" <<EOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+
+[req_distinguished_name]
+
+[v3_ca]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+basicConstraints = critical, CA:true
+keyUsage = critical, keyCertSign, cRLSign
+EOF
+
   openssl req -x509 -new -nodes -key "$CA_KEY" -sha256 -days 3650 \
     -out "$CA_CRT" \
     -subj "/C=US/O=AnycertLocalCA/CN=Anycert Local Root CA (${SERVER_HOSTNAME})" \
+    -config "$ca_conf" \
+    -extensions v3_ca \
     2>/dev/null
+
+  rm -f "$ca_conf"
   chmod 600 "$CA_KEY"
   chmod 644 "$CA_CRT"
   ok "Root CA created successfully: $CA_CRT"
@@ -592,7 +791,7 @@ install_cert() {
       warn "PVE services restart failed. Run 'systemctl status pveproxy' to check."
     fi
 
-  elif [[ "$PROFILE" == "nginx_proxy" ]]; then
+  elif [[ "$PROFILE" == "nginx_proxy" || "$PROFILE" == "nginx_gateway" ]]; then
     info "Deploying and configuring Nginx Reverse Proxy..."
     
     # 1. Install Nginx if missing
@@ -604,14 +803,56 @@ install_cert() {
         dnf install -y nginx
       elif command -v yum &>/dev/null; then
         yum install -y nginx
-      else
-        die "Nginx package installation is not supported on this OS. Please install Nginx manually."
+      elif $IS_MAC; then
+        local RUN_USER="${SUDO_USER:-$(whoami)}"
+        if [[ -z "$BREW_CMD" ]]; then
+          info "Homebrew not found. Installing Homebrew first..."
+          # Homebrew installer must run as normal user (SUDO_USER)
+          if sudo -u "$RUN_USER" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+            # Find brew path again
+            if [[ -x "/opt/homebrew/bin/brew" ]]; then
+              BREW_CMD="/opt/homebrew/bin/brew"
+            elif [[ -x "/usr/local/bin/brew" ]]; then
+              BREW_CMD="/usr/local/bin/brew"
+            fi
+            
+            # Setup shell environment for the current script process and zprofile
+            if [[ -n "$BREW_CMD" ]]; then
+              eval "$("$BREW_CMD" shellenv)"
+              local USER_HOME
+              USER_HOME=$(eval echo "~$RUN_USER")
+              if ! grep -q "brew shellenv" "${USER_HOME}/.zprofile" 2>/dev/null; then
+                echo "eval \"\$(${BREW_CMD} shellenv)\"" >> "${USER_HOME}/.zprofile"
+                chown "$RUN_USER" "${USER_HOME}/.zprofile"
+              fi
+            fi
+          fi
+        fi
+        
+        if [[ -n "$BREW_CMD" ]]; then
+          info "Installing Nginx via Homebrew as user ${RUN_USER}..."
+          sudo -u "$RUN_USER" "$BREW_CMD" update || true
+          sudo -u "$RUN_USER" "$BREW_CMD" install nginx || true
+        else
+          die "Failed to install Homebrew. Please install Homebrew and Nginx manually."
+        fi
       fi
       ok "Nginx installed successfully!"
     fi
     
-    # 2. Write configuration file /etc/nginx/conf.d/anycert_proxy.conf
+    # 2. Write configuration file
     local NGINX_CONF="/etc/nginx/conf.d/anycert_proxy.conf"
+    if $IS_MAC; then
+      local BREW_PREFIX
+      BREW_PREFIX=$([[ -n "$BREW_CMD" ]] && "$BREW_CMD" --prefix 2>/dev/null || echo "/opt/homebrew")
+      local NGINX_DIR="${BREW_PREFIX}/etc/nginx"
+      NGINX_CONF="${NGINX_DIR}/servers/anycert_proxy.conf"
+      
+      # Create macOS Homebrew Nginx temporary and log directories if missing
+      mkdir -p "${BREW_PREFIX}/var/run/nginx" "${BREW_PREFIX}/var/log/nginx"
+      local RUN_USER="${SUDO_USER:-$(whoami)}"
+      chown -R "${RUN_USER}:admin" "${BREW_PREFIX}/var/run/nginx" "${BREW_PREFIX}/var/log/nginx" 2>/dev/null || true
+    fi
     mkdir -p "$(dirname "$NGINX_CONF")"
     
     # Clean file first
@@ -626,14 +867,18 @@ install_cert() {
     NGINX_SERVER_NAMES="${NGINX_SERVER_NAMES} localhost 127.0.0.1"
     
     # Write server blocks
-    local ASSIGNED_SSL_PORTS=()
-    for P in ${PROXY_PORTS}; do
+    ASSIGNED_SSL_PORTS=()
+    for M in ${PROXY_PORTS}; do
+      local P
+      P=$(echo "$M" | cut -d: -f1)
+      local BIP
+      BIP=$(echo "$M" | cut -d: -f2)
       local SSL_P
       SSL_P=$(resolve_ssl_port "$P")
 
       cat << EOF >> "$NGINX_CONF"
 
-# SSL Wrapper for Port ${P} -> ${SSL_P}
+# SSL Wrapper for Port ${P} -> ${SSL_P} (Backend: ${BIP}:${P})
 server {
     listen ${SSL_P} ssl;
     server_name ${NGINX_SERVER_NAMES};
@@ -642,7 +887,7 @@ server {
     ssl_certificate_key  /etc/anycert/anycert-server.key;
 
     location / {
-        proxy_pass http://127.0.0.1:${P};
+        proxy_pass http://${BIP}:${P};
         proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_redirect http:// https://;
@@ -659,19 +904,46 @@ EOF
     
     # 3. Start or reload Nginx
     info "Testing Nginx configuration..."
-    if nginx -t &>/dev/null; then
-      if systemctl is-active --quiet nginx; then
+    local NGINX_TEST_ERR
+    # Execute nginx -t and capture output
+    if NGINX_TEST_ERR=$(nginx -t 2>&1); then
+      local NGINX_RUNNING=false
+      if $IS_MAC; then
+        if ps ax | grep -v grep | grep -q nginx; then
+          NGINX_RUNNING=true
+        fi
+      else
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+          NGINX_RUNNING=true
+        fi
+      fi
+
+      if $NGINX_RUNNING; then
         info "Reloading Nginx daemon..."
-        systemctl reload nginx
+        if $IS_MAC; then
+          nginx -s reload
+        else
+          systemctl reload nginx
+        fi
         ok "Nginx reloaded successfully!"
       else
         info "Starting Nginx daemon..."
-        systemctl start nginx
-        systemctl enable nginx || true
+        if $IS_MAC; then
+          if [[ -n "$BREW_CMD" ]]; then
+            sudo "$BREW_CMD" services start nginx
+          else
+            nginx
+          fi
+        else
+          systemctl start nginx
+          systemctl enable nginx || true
+        fi
         ok "Nginx started successfully!"
       fi
     else
-      error "Nginx configuration test failed! Please check '/etc/nginx/conf.d/anycert_proxy.conf'."
+      error "Nginx configuration test failed! Please check '${NGINX_CONF}'."
+      echo -e "${RED}Nginx Test Details:${RESET}\n$NGINX_TEST_ERR\n"
+      exit 1
     fi
 
   elif [[ "$PROFILE" == "custom" ]]; then
@@ -708,31 +980,17 @@ EOF
     return
   fi
 
-  # ── Import CA locally (optional) ──
+  # Show tip for complete local browser access setup on this server
   echo ""
-  echo -e "${CYAN}[INFO]${RESET} Import this Root CA into this server's local system trust store for local browser/tooling access."
-  read -rp "$(echo -e "${YELLOW}Do you want to import? [y/N]${RESET} ")" LOCAL_TRUST
-  if [[ "$LOCAL_TRUST" =~ ^[Yy]$ ]]; then
-    if $IS_LINUX; then
-      if command -v update-ca-certificates &>/dev/null; then
-        cp "$CA_CRT" "/usr/local/share/ca-certificates/anycert-ca-local.crt"
-        update-ca-certificates
-        ok "CA certificate imported to local system trust store."
-      elif command -v update-ca-trust &>/dev/null; then
-        cp "$CA_CRT" "/etc/pki/ca-trust/source/anchors/anycert-ca-local.crt"
-        update-ca-trust extract
-        ok "CA certificate imported to local system trust store."
-      else
-        warn "Local certificate update tool not found. Skipping import."
-      fi
-    elif $IS_MAC; then
-      if security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA_CRT"; then
-        ok "CA certificate imported to macOS local System Keychain."
-      else
-        warn "Failed to import CA certificate to macOS local Keychain."
-      fi
-    fi
+  echo -e "  ${CYAN}[Tip] If you want this server itself to securely access its own local HTTPS services via browser,${RESET}"
+  echo -e "        ${CYAN}you can run the client installation script on this machine:${RESET}"
+  if $IS_MAC; then
+    echo -e "        ${GREEN}sudo bash anycert-macos.sh${RESET}"
+  else
+    echo -e "        ${GREEN}sudo bash anycert-linux.sh${RESET}"
   fi
+  echo -e "        (Use '127.0.0.1' as the Server IP and select local CA import)"
+  echo ""
 }
 
 save_config() {
@@ -749,13 +1007,13 @@ CUSTOM_CERT="${CUSTOM_CERT}"
 CUSTOM_KEY="${CUSTOM_KEY}"
 RELOAD_CMD="${RELOAD_CMD}"
 EOF
-  elif [[ "$PROFILE" == "nginx_proxy" ]]; then
+  elif [[ "$PROFILE" == "nginx_proxy" || "$PROFILE" == "nginx_gateway" ]]; then
     cat >> "$CONF_FILE" <<EOF
 PROXY_PORTS="${PROXY_PORTS}"
 PORT_OFFSET="${PORT_OFFSET}"
 EOF
   fi
-  chmod 600 "$CONF_FILE"
+  chmod 644 "$CONF_FILE"
 }
 
 show_summary() {
@@ -809,18 +1067,39 @@ show_summary() {
     printf "  %-45s %s\n" "PVE Applied Certificate Path:"          "/etc/pve/local/pveproxy-ssl.pem"
   elif [[ "$PROFILE" == "custom" ]]; then
     printf "  %-45s %s\n" "Custom Applied Certificate Path:"          "$CUSTOM_CERT"
-  elif [[ "$PROFILE" == "nginx_proxy" ]]; then
-    printf "  %-45s %s\n" "Nginx Configured File:"                 "/etc/nginx/conf.d/anycert_proxy.conf"
+  elif [[ "$PROFILE" == "nginx_proxy" || "$PROFILE" == "nginx_gateway" ]]; then
+    if $IS_MAC; then
+      local BREW_PREFIX
+      BREW_PREFIX=$([[ -n "$BREW_CMD" ]] && "$BREW_CMD" --prefix 2>/dev/null || echo "/opt/homebrew")
+      printf "  %-45s %s\n" "Nginx Configured File:" "${BREW_PREFIX}/etc/nginx/servers/anycert_proxy.conf"
+    else
+      printf "  %-45s %s\n" "Nginx Configured File:" "/etc/nginx/conf.d/anycert_proxy.conf"
+    fi
   fi
 
   if [[ "$PROFILE" == "nginx_proxy" ]]; then
     echo ""
     echo -e "${BOLD}[ Nginx SSL Proxy Port Mappings ]${RESET}"
-    local ASSIGNED_SSL_PORTS=()
-    for P in ${PROXY_PORTS}; do
+    ASSIGNED_SSL_PORTS=()
+    for M in ${PROXY_PORTS}; do
+      local P
+      P=$(echo "$M" | cut -d: -f1)
       local SSL_P
       SSL_P=$(resolve_ssl_port "$P")
       echo -e "  - ${GREEN}https://${SERVER_FQDN}:${SSL_P}${RESET}  ->  HTTP localhost:${P}"
+    done
+  elif [[ "$PROFILE" == "nginx_gateway" ]]; then
+    echo ""
+    echo -e "${BOLD}[ Nginx SSL Gateway Port Mappings ]${RESET}"
+    ASSIGNED_SSL_PORTS=()
+    for M in ${PROXY_PORTS}; do
+      local P
+      P=$(echo "$M" | cut -d: -f1)
+      local BIP
+      BIP=$(echo "$M" | cut -d: -f2)
+      local SSL_P
+      SSL_P=$(resolve_ssl_port "$P")
+      echo -e "  - ${GREEN}https://${SERVER_FQDN}:${SSL_P}${RESET}  ->  http://${BIP}:${P}"
     done
   fi
 
@@ -845,7 +1124,56 @@ show_summary() {
   echo -e "     - Windows: ${BOLD}anycert-windows.bat${RESET}"
   echo -e "     - Linux:   ${BOLD}sudo bash anycert-linux.sh${RESET}"
   echo -e "     - macOS:   ${BOLD}sudo bash anycert-macos.sh${RESET}"
-  echo ""
+  if [[ "$IS_WSL" == "true" ]]; then
+    local host_ip="0.0.0.0"
+    local primary_ip
+    primary_ip=$(echo "$SERVER_IP" | awk '{print $1}')
+    if [[ "$primary_ip" != "$WSL_INTERNAL_IP" && "$primary_ip" != "127.0.0.1" ]]; then
+      host_ip="$primary_ip"
+    else
+      for ip in ${EXTRA_IPS:-}; do
+        if [[ "$ip" != "$WSL_INTERNAL_IP" && "$ip" != "127.0.0.1" && "$ip" != "localhost" ]]; then
+          host_ip="$ip"
+          break
+        fi
+      done
+    fi
+
+    echo -e "${YELLOW}💡 [WSL 2 Network Forwarding Tips]${RESET}"
+    echo -e "  Since you are running in WSL 2, if you want to connect from other LAN devices,"
+    echo -e "  please run these commands in ${BOLD}Administrator PowerShell${RESET} on your Windows host:"
+    echo ""
+    echo -e "  # 1. Forward SSH (Port 22) for client installation"
+    echo -e "  #    ${YELLOW}[WARNING]${RESET} If Windows Host's own SSH Server (sshd) is running on port 22, it will conflict."
+    echo -e "  #              You must temporarily stop it first via: ${BOLD}net stop sshd${RESET}"
+    echo -e "  ${CYAN}netsh interface portproxy add v4tov4 listenport=22 listenaddress=${host_ip} connectport=22 connectaddress=${WSL_INTERNAL_IP}${RESET}"
+    echo ""
+    if [[ "$PROFILE" == "nginx_proxy" ]]; then
+      echo -e "  # 2. Forward Nginx HTTPS ports"
+      local netsh_firewall_ports="22"
+      for P in ${PROXY_PORTS}; do
+        local SSL_P
+        SSL_P=$(resolve_ssl_port "$P")
+        echo -e "  ${CYAN}netsh interface portproxy add v4tov4 listenport=${SSL_P} listenaddress=${host_ip} connectport=${SSL_P} connectaddress=${WSL_INTERNAL_IP}${RESET}"
+        netsh_firewall_ports="${netsh_firewall_ports},${SSL_P}"
+      done
+      echo ""
+      echo -e "  # 3. Allow ports in Windows Defender Firewall"
+      echo -e "  ${CYAN}netsh advfirewall firewall add rule name=\"WSL Ports\" dir=in action=allow protocol=TCP localport=${netsh_firewall_ports}${RESET}"
+    else
+      echo -e "  # 3. Allow ports in Windows Defender Firewall"
+      echo -e "  ${CYAN}netsh advfirewall firewall add rule name=\"WSL SSH Port\" dir=in action=allow protocol=TCP localport=22${RESET}"
+    fi
+    if [[ "$host_ip" == "0.0.0.0" ]]; then
+      echo ""
+      echo -e "  ${YELLOW}[IMPORTANT]${RESET} The forwarding listenaddress is set to 0.0.0.0, which listens on all Windows network interfaces."
+      echo -e "              Please note that the server certificate currently does not contain your Windows host's actual LAN IP."
+      echo -e "              If client devices connect via IP, they will see certificate warnings. To fix this, rerun the script"
+      echo -e "              and add your Windows Host IP in the 'Additional IP Addresses' prompt."
+    fi
+    echo ""
+  fi
+
   ok "Installation completed successfully!"
 }
 
@@ -856,18 +1184,25 @@ sanitize_proxyports() {
   local SP_NEW=""
   for P in $PROXY_PORTS; do
     local SP_T="$P"
-    # Strip leading +, -, or : prefix
-    [[ "${SP_T:0:1}" == "+" ]] && SP_T="${SP_T:1}"
-    [[ "${SP_T:0:1}" == "-" ]] && SP_T="${SP_T:1}"
-    [[ "${SP_T:0:1}" == ":" ]] && SP_T="${SP_T:1}"
+    local PORT_PART
+    PORT_PART=$(echo "$SP_T" | cut -d: -f1)
+    local IP_PART
+    IP_PART=$(echo "$SP_T" | cut -d: -f2 -s)
+    [[ -z "$IP_PART" ]] && IP_PART="127.0.0.1"
+
+    # Strip leading +, -, or : prefix of the port part
+    [[ "${PORT_PART:0:1}" == "+" ]] && PORT_PART="${PORT_PART:1}"
+    [[ "${PORT_PART:0:1}" == "-" ]] && PORT_PART="${PORT_PART:1}"
+    [[ "${PORT_PART:0:1}" == ":" ]] && PORT_PART="${PORT_PART:1}"
+
     if [[ -z "$SP_NEW" ]]; then
-      SP_NEW="$SP_T"
+      SP_NEW="${PORT_PART}:${IP_PART}"
     else
-      SP_NEW="$SP_NEW $SP_T"
+      SP_NEW="$SP_NEW ${PORT_PART}:${IP_PART}"
     fi
   done
-  # Sort numerically ascending and deduplicate
-  PROXY_PORTS=$(echo "$SP_NEW" | tr ' ' '\n' | awk 'NF && !seen[$1]++' | sort -n | tr '\n' ' ' | xargs)
+  # Sort numerically ascending based on the port number (first field before colon), and deduplicate
+  PROXY_PORTS=$(echo "$SP_NEW" | tr ' ' '\n' | sort -t: -k1,1n -u | tr '\n' ' ' | xargs)
 }
 
 process_port_adjustments() {
@@ -880,34 +1215,55 @@ process_port_adjustments() {
 
   # Incremental/decremental adjustment mode
   for TOKEN in $NEW_PROXY_PORTS; do
-    # Strip all leading +, -, : prefixes first to get the clean port number
-    local TARGET_PORT="$TOKEN"
-    [[ "${TARGET_PORT:0:1}" == "+" ]] && TARGET_PORT="${TARGET_PORT:1}"
-    [[ "${TARGET_PORT:0:1}" == "-" ]] && TARGET_PORT="${TARGET_PORT:1}"
-    [[ "${TARGET_PORT:0:1}" == ":" ]] && TARGET_PORT="${TARGET_PORT:1}"
+    # Strip all leading +, -, : prefixes first to get the clean port or mapping
+    local TARGET_ITEM="$TOKEN"
+    [[ "${TARGET_ITEM:0:1}" == "+" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
+    [[ "${TARGET_ITEM:0:1}" == "-" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
+    [[ "${TARGET_ITEM:0:1}" == ":" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
+
+    # Get port and IP parts
+    local TARGET_PORT
+    TARGET_PORT=$(echo "$TARGET_ITEM" | cut -d: -f1)
+    local TARGET_IP
+    TARGET_IP=$(echo "$TARGET_ITEM" | cut -d: -f2 -s)
+    [[ -z "$TARGET_IP" ]] && TARGET_IP="127.0.0.1"
 
     # Determine if original token starts with '-'
     if [[ "$TOKEN" =~ ^- ]]; then
-      # Remove TARGET_PORT from PROXY_PORTS
+      # Remove by port
       local NEW_LIST=""
       for P in $PROXY_PORTS; do
-        if [[ "$P" != "$TARGET_PORT" ]]; then
+        local OP
+        OP=$(echo "$P" | cut -d: -f1)
+        if [[ "$OP" != "$TARGET_PORT" ]]; then
           NEW_LIST="$NEW_LIST $P"
         fi
       done
       PROXY_PORTS=$(echo "$NEW_LIST" | xargs)
     else
-      # TARGET_PORT is already cleaned above; use it for addition
+      # Add or update
+      if [[ "$PROFILE" == "nginx_gateway" && "$TARGET_IP" == "127.0.0.1" ]]; then
+        read -rp "  Enter backend IP for port $TARGET_PORT [default: 127.0.0.1]: " INPUT_BIP
+        [[ -n "$INPUT_BIP" ]] && TARGET_IP="$INPUT_BIP"
+      fi
+
       local ALREADY_HAS=0
+      local NEW_LIST=""
       for P in $PROXY_PORTS; do
-        if [[ "$P" == "$TARGET_PORT" ]]; then
+        local OP
+        OP=$(echo "$P" | cut -d: -f1)
+        if [[ "$OP" == "$TARGET_PORT" ]]; then
+          # Update existing mapping
+          NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
           ALREADY_HAS=1
-          break
+        else
+          NEW_LIST="$NEW_LIST $P"
         fi
       done
       if [[ $ALREADY_HAS -eq 0 ]]; then
-        PROXY_PORTS="$PROXY_PORTS $TARGET_PORT"
+        NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
       fi
+      PROXY_PORTS=$(echo "$NEW_LIST" | xargs)
     fi
   done
   PROXY_PORTS=$(echo "$PROXY_PORTS" | xargs)
@@ -920,7 +1276,7 @@ check_existing_cert() {
     
     # Parse subject and expiration
     local CERT_SUBJ
-    CERT_SUBJ=$(openssl x509 -subject -noout -in "$SERVER_CRT" 2>/dev/null | sed 's/subject=//' | sed 's/CN=//' | xargs)
+    CERT_SUBJ=$(openssl x509 -subject -noout -in "$SERVER_CRT" 2>/dev/null | sed -e 's/subject=//' -e 's/.*CN[ =]*//' -e 's/\/.*//' | xargs)
     local EXP_DATE
     EXP_DATE=$(openssl x509 -enddate -noout -in "$SERVER_CRT" 2>/dev/null | cut -d= -f2)
     local EXP_EPOCH
