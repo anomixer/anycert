@@ -683,7 +683,7 @@ generate_ca() {
   fi
 
   info "Generating Root CA..."
-  openssl genrsa -out "$CA_KEY" 4096 2>/dev/null
+  openssl genrsa -out "$CA_KEY" 4096
   local ca_conf
   ca_conf=$(mktemp)
   cat > "$ca_conf" <<EOF
@@ -704,10 +704,10 @@ EOF
     -out "$CA_CRT" \
     -subj "/C=US/O=AnycertLocalCA/CN=Anycert Local Root CA (${SERVER_HOSTNAME})" \
     -config "$ca_conf" \
-    -extensions v3_ca \
-    2>/dev/null
+    -extensions v3_ca
 
   rm -f "$ca_conf"
+  [[ -f "$CA_CRT" ]] || die "Failed to create Root CA certificate! (see openssl output above)"
   chmod 600 "$CA_KEY"
   chmod 644 "$CA_CRT"
   ok "Root CA created successfully: $CA_CRT"
@@ -716,14 +716,15 @@ EOF
 generate_server_cert() {
   info "Issuing server certificate (with SAN)..."
 
-  openssl genrsa -out "$SERVER_KEY" 2048 2>/dev/null
+  openssl genrsa -out "$SERVER_KEY" 2048
   
   local csr_temp
   csr_temp=$(mktemp)
   openssl req -new -key "$SERVER_KEY" \
     -out "$csr_temp" \
-    -subj "/CN=${SERVER_FQDN}" \
-    2>/dev/null
+    -subj "/CN=${SERVER_FQDN}"
+
+  [[ -s "$csr_temp" ]] || die "Failed to create server CSR! (see openssl output above)"
 
   # Build SAN IP entries: primary IP + extra IPs (Tailscale, VPN, etc.)
   local SAN_IPS="IP:${SERVER_IP},IP:127.0.0.1"
@@ -744,8 +745,14 @@ EOF
   openssl x509 -req -in "$csr_temp" \
     -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
     -out "$SERVER_CRT" -days 825 -sha256 \
-    -extfile "$san_conf" \
-    2>/dev/null
+    -extfile "$san_conf"
+
+  if [[ ! -f "$SERVER_CRT" ]]; then
+    error "Failed to issue server certificate! (see openssl output above)"
+    error "CSR kept at: $csr_temp"
+    error "SAN conf kept at: $san_conf"
+    exit 1
+  fi
 
   rm -f "$san_conf" "$csr_temp"
   chmod 600 "$SERVER_KEY"

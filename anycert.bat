@@ -722,7 +722,7 @@ echo   Reusing existing CA certificate.
 goto skip_gen_ca
 
 :do_gen_ca
-!OPENSSL_BIN! genrsa -out "!CA_KEY!" 4096 >nul 2>&1
+!OPENSSL_BIN! genrsa -out "!CA_KEY!" 4096
 (
 echo [req]
 echo distinguished_name = req_distinguished_name
@@ -733,9 +733,15 @@ echo subjectKeyIdentifier = hash
 echo authorityKeyIdentifier = keyid:always,issuer
 echo basicConstraints = critical, CA:true
 echo keyUsage = critical, keyCertSign, cRLSign
-) > "%TEMP%\anycert_ca.cnf"
-!OPENSSL_BIN! req -x509 -new -nodes -key "!CA_KEY!" -sha256 -days 3650 -out "!CA_CRT!" -subj "/C=US/O=AnycertLocalCA/CN=Anycert Local Root CA (!SERVER_HOSTNAME!)" -config "%TEMP%\anycert_ca.cnf" -extensions v3_ca >nul 2>&1
-del /f /q "%TEMP%\anycert_ca.cnf" >nul 2>&1
+) > "!CONF_DIR!\anycert_ca.cnf"
+!OPENSSL_BIN! req -x509 -new -nodes -key "!CA_KEY!" -sha256 -days 3650 -out "!CA_CRT!" -subj "/C=US/O=AnycertLocalCA/CN=Anycert Local Root CA (!SERVER_HOSTNAME!)" -config "!CONF_DIR!\anycert_ca.cnf" -extensions v3_ca
+set "CA_GEN_ERR=!errorlevel!"
+del /f /q "!CONF_DIR!\anycert_ca.cnf" >nul 2>&1
+if not exist "!CA_CRT!" (
+    echo   !RED![ERROR]!RESET! Failed to create Root CA certificate! openssl exit code: !CA_GEN_ERR! ^(see output above^)
+    pause
+    exit /b 1
+)
 echo   !GREEN![OK]!RESET! Root CA created successfully: !CA_CRT!
 
 :skip_gen_ca
@@ -747,8 +753,13 @@ echo -----------------------------------------------------
 set SERVER_CSR=!CONF_DIR!\anycert-server.csr
 set SAN_CONF=!CONF_DIR!\san.conf
 
-!OPENSSL_BIN! genrsa -out "!SERVER_KEY!" 2048 >nul 2>&1
-!OPENSSL_BIN! req -new -key "!SERVER_KEY!" -out "!SERVER_CSR!" -subj "/CN=!SERVER_FQDN!" >nul 2>&1
+!OPENSSL_BIN! genrsa -out "!SERVER_KEY!" 2048
+!OPENSSL_BIN! req -new -key "!SERVER_KEY!" -out "!SERVER_CSR!" -subj "/CN=!SERVER_FQDN!"
+if not exist "!SERVER_CSR!" (
+    echo   !RED![ERROR]!RESET! Failed to create server CSR! ^(see openssl output above^)
+    pause
+    exit /b 1
+)
 
 :: Build SAN IP list (primary + extra IPs)
 set SAN_IPS=IP:!SERVER_IP!,IP:127.0.0.1
@@ -772,7 +783,14 @@ echo keyUsage=digitalSignature,keyEncipherment
 echo extendedKeyUsage=serverAuth
 ) > "!SAN_CONF!"
 
-!OPENSSL_BIN! x509 -req -in "!SERVER_CSR!" -CA "!CA_CRT!" -CAkey "!CA_KEY!" -CAcreateserial -out "!SERVER_CRT!" -days 825 -sha256 -extfile "!SAN_CONF!" >nul 2>&1
+!OPENSSL_BIN! x509 -req -in "!SERVER_CSR!" -CA "!CA_CRT!" -CAkey "!CA_KEY!" -CAcreateserial -out "!SERVER_CRT!" -days 825 -sha256 -extfile "!SAN_CONF!"
+if not exist "!SERVER_CRT!" (
+    echo   !RED![ERROR]!RESET! Failed to issue server certificate! ^(see openssl output above^)
+    echo   CSR kept at: !SERVER_CSR!
+    echo   SAN conf kept at: !SAN_CONF!
+    pause
+    exit /b 1
+)
 
 :: Cleanup temp files
 if exist "!SERVER_CSR!" del "!SERVER_CSR!"

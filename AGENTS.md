@@ -36,7 +36,7 @@
 - **離線手動複製模式**：在用戶端腳本中加入了手動模式選單。如果 Windows Server 把 SSH 與 SMB 通通關閉，使用者可以自行將 `anycert-ca.crt` 拷貝至 Client 本地端，腳本依然會全自動幫忙完成系統信任導入、瀏覽器設定與 hosts 配置。
 
 ### 階段 5：選單順序對齊與可自訂 HTTPS Port 偏移量
-- **選單順序對齊**：將 `anycert.bat` 的 Service Profile 選單順序改成與 `anycert.sh` 完全一致：`[1] Nginx（預設）` / `[2] Custom` / `[3] Generate Only`，預設選項統一為 Nginx。
+- **選單順序對齊**：將 `anycert.bat` 的 Service Profile 選單順序改成與 `anycert.sh` 完全一致：`[1] Nginx SSL Proxy（預設）` / `[2] Nginx SSL Gateway` / `[3] Custom Path` / `[4] Generate Only` / `[5] Proxmox VE（僅 PVE 系統顯示）`，預設選項統一為 Nginx SSL Proxy。
 - **可自訂 HTTPS Port 偏移量（PORT_OFFSET）**：
   - 原本 Nginx 一鍵代理的 HTTPS 連接埠固定為 `HTTP Port + 10000`。
   - 現在使用者可在 Nginx 設定階段自行輸入偏移量（如 `+1` / `+10` / `+443`），預設仍為 `10000`，並保留碰撞自動 `+1` 避讓邏輯（例如 offset=1 時若 `8081` 已佔用則自動取 `8082`）。
@@ -56,7 +56,7 @@
 - **Custom Path Reload 防禦**：使用者在 Custom Path 輸入 `nginx -s reload` 但本機未安裝 Nginx 時，原本會噴 `'nginx' is not recognized` 且隨後崩潰。現於執行 `RELOAD_CMD` 前先偵測：若指令含 `nginx` 且 `C:\nginx\nginx.exe` 不存在，直接給出明確警告並跳過執行，不再盲目呼叫導致報錯。
 
 ### 階段 8：Renew 流程跳過 Service Profile 重新詢問
-- **痛點**：原有 Renew（[2]）流程在重新產生憑證前，仍會重新執行 `choose_profile`，讓使用者重新選擇部署模式。這除了多此一舉，也讓使用者在 Renew 時有機會誤選其他 Profile（例如從 `nginx_proxy` 誤切到 `Custom`），進而觸發不必要的部署錯誤。
+- **痛點**：原有 Renew（[2]）流程在重新產生憑證前，仍會重新執行 `choose_profile`，讓使用者重新選擇部署模式。這除了多此一舉，也讓使用者在 Renew 時有機會誤選其他 Profile（例如從 `Nginx SSL Proxy` 誤切到 `Custom Path`），進而觸發不必要的部署錯誤。
 - **修正**：在 `check_existing_cert` 選 `[2] Renew` 時設定 `ONLY_RENEW=1`（bat）/ `RENEW_MODE=1`（sh）；進入安裝流程時，若處於 Renew 模式則**直接沿用既有 `PROFILE` / `PROXY_PORTS` / `PORT_OFFSET` / `CUSTOM_*`**，跳過 `choose_profile`，僅印出「Reusing existing Service Profile: <profile>」與摘要，隨後照常詢問是否繼續並重新簽發憑證、重新部署。兩腳本行為對齊。
 
 ### 階段 9：修復 Port 增量調整 `+` 被誤判為覆蓋的 Bug
@@ -150,10 +150,10 @@
 ### 🖥️ 伺服器端腳本
 - [anycert.sh](anycert.sh) (Linux/macOS 伺服器)：
   - 負責產生 Root CA（10年）與伺服器憑證（825天）。
-  - 提供四大部署選項：一鍵 Nginx 反代（HTTPS Port = HTTP Port + 自訂偏移量，預設 +10000）、Proxmox VE (PVE) 自動替換、自訂路徑部署與僅產生憑證。
+  - 提供五大部署選項：一鍵 Nginx 反代（HTTPS Port = HTTP Port + 自訂偏移量，預設 +10000）、Nginx SSL Gateway、自訂路徑部署、僅產生憑證，以及 Proxmox VE (PVE) 自動替換（僅在 PVE 系統顯示）。
 - [anycert.bat](anycert.bat) (Windows 伺服器)：
   - 尋找 Git 內建的 OpenSSL 或系統 OpenSSL 簽發憑證。
-  - 支援 Windows 本地端一鍵 Nginx 反代安裝與配置（選單順序與 `anycert.sh` 對齊：`[1] Nginx` / `[2] Custom` / `[3] Generate Only`，預設 Nginx）。
+  - 支援 Windows 本地端一鍵 Nginx 反代安裝與配置（選單順序與 `anycert.sh` 對齊：`[1] Nginx SSL Proxy（預設）` / `[2] Nginx SSL Gateway` / `[3] Custom Path` / `[4] Generate Only` / `[5] Proxmox VE（僅 PVE 系統顯示）`）。
   - 採用扁平化 label 語法，避開 CMD 解析器陷阱。
 
 ### 💻 用戶端腳本
@@ -178,17 +178,17 @@
 ### 1. 伺服器端部署 (Server Setup)
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `anycert.???`        | .bat  | .sh | .sh  | .sh | .sh |
-| -> server setup      |  ✅  | ✅ |  ✅  | ✅ | ✅ |
-| local browser access |  ✅  | ✅ |  ✅  | ✅ |⚠️|
-| -> client setup?     |  ✅  | ✅ |  ✅  | ✅ |⚠️|
+| `anycert.???`        | .bat  | .sh   |  .sh  | .sh  | .sh |
+| -> server setup      |       |  ✅  |       |       | ✅ |
+| local browser access |       |       |       |      |  ⚠️ |
+| -> client setup?     |       |       |       |      |  ⚠️ |
 
 ### 2. 用戶端信任導入 (Client Setup)
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `anycert-linux.sh`    |  ✅  | ✅ |  ✅  | ✅ | ✅ |
-| `anycert-macos.sh`    |  ✅  | ✅ |  ✅  | ✅ | ✅ |
-| `anycert-windows.bat` |  ✅  | ✅ |  ✅  | ✅ | ✅ |
+| `anycert-linux.sh`    |   | ✅ |   |   | ✅ |
+| `anycert-macos.sh`    |   | ✅ |   |   | ✅ |
+| `anycert-windows.bat` |   | ✅ |   |   | ✅ |
 
 ---
 
@@ -219,4 +219,11 @@
   - 進一步測試 Linux 用戶端在 WSL 2 環境中對接實體 Windows Server 或同機 Windows 宿主機時的網路通訊與證書導入順暢度。
 - [ ] **Nginx 反代 SSL 設定檔安全加固**：
   - 未來可微調 Nginx 反代產生的 SSL 配置，預設加入更嚴格的 TLS 1.2/1.3 協定限制與現代 Cipher Suites 加密套件。
+- [ ] **Web 管理介面 (Profile [1] & [2] 專用)**：
+  - 針對已部署 Nginx 的 Profile [1] Nginx SSL Proxy 和 Profile [2] Nginx SSL Gateway，開發基於瀏覽器的 Web 管理介面。
+  - 利用現有 Nginx HTTPS 基礎，直接使用靜態 HTML/JS 頁面服務，無需額外 API 進程。
+  - 用戶端直接登入 server 端的 cert management site，選擇平台後下載打包好的 zip 檔案。
+  - zip 包含：CA 憑證、專屬 client 腳本（已預配置 server IP/FQDN）、安裝說明。
+  - 用戶下載後解壓執行腳本即可自動導入憑證，免除手動執行 client script 的複雜操作。
+  - 預設監聽 localhost:8443，可選擇開放遠端存取（需基本認證）。
 

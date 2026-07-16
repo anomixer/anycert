@@ -10,24 +10,29 @@ It creates your own local CA, issues trusted HTTPS certificates for localhost an
 
 ---
 
-## File Description
+## Quick Start
 
-### Server-side (Generator & Installer)
-| File | Platform | Usage |
-|------|----------|-------|
-| `anycert.sh` | Linux (including WSL) / macOS Server | Generates Root CA + Server cert, supports PVE, Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
-| `anycert.bat` | Windows Server | Generates Root CA + Server cert, supports Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
+**Server** (generate & deploy certs):
+```bash
+git clone https://github.com/anomixer/anycert.git
+cd anycert
+sudo bash anycert.sh
+```
 
-### Client-side (Downloader & Truster)
-| File | Platform | Usage |
-|------|----------|-------|
-| `anycert-windows.bat` | Windows Client | Downloads CA cert, updates hosts, imports to Windows Trust Store |
-| `anycert-linux.sh` | Linux Client (Ubuntu/Debian) | Downloads CA cert, updates hosts, imports to system and browser (Chrome/Firefox) Trust Stores |
-| `anycert-macos.sh` | macOS Client | Downloads CA cert, updates hosts, imports to macOS Keychain |
+**Each Client** (trust the CA):
+```bash
+# Windows: right-click anycert-windows.bat → Run as Administrator
+# Linux:
+sudo bash anycert-linux.sh
+# macOS:
+sudo bash anycert-macos.sh
+```
+
+**Done.** Access your server securely via `https://<your-fqdn>:<port>` or `https://<your-ip>:<port>`.
 
 ---
 
-## Why anycert? (Comparison Table)
+## Why anycert?
 
 How does `anycert` compare with other internal TLS/HTTPS solutions?
 
@@ -54,7 +59,62 @@ How does `anycert` compare with other internal TLS/HTTPS solutions?
 
 ---
 
-## 🔒 Why Local HTTPS Matters?
+### anycert vs. mkcert
+
+[mkcert](https://github.com/FiloSottile/mkcert) is a popular zero-config tool for generating locally-trusted development certificates. anycert covers the same use case and more. Here's how the two compare:
+
+| Feature | **[mkcert](https://github.com/FiloSottile/mkcert)** | **anycert Profile [4] Generate Only** | **anycert Profile [3] Custom Path** | **anycert Profile [1] Nginx SSL Proxy** |
+|---|---|---|---|---|
+| **Local Dev HTTPS (localhost)** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **LAN / IP SAN support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Installs CA to system trust store** | ✅ Auto | ✅ Auto (via client script) | ✅ Auto (via client script) | ✅ Auto (server-side) |
+| **Installs CA to Firefox / Chrome NSS** | ✅ Yes | ✅ Yes (via client script) | ✅ Yes (via client script) | ✅ Yes (via client script) |
+| **Copies cert to service path** | ❌ Manual | ❌ Manual | ✅ Auto | ✅ Auto (Nginx) |
+| **Auto service reload after deploy** | ❌ No | ❌ No | ✅ Configurable | ✅ Yes (Nginx reload) |
+| **Auto-installs reverse proxy (Nginx)** | ❌ No | ❌ No | ❌ No | ✅ Yes |
+| **LAN multi-device CA distribution** | ❌ Manual (copy rootCA.pem yourself) | ✅ Client script auto-fetches & imports | ✅ Client script auto-fetches & imports | ✅ Client script auto-fetches & imports |
+| **Hosts file update on clients** | ❌ Manual | ✅ Auto (client script) | ✅ Auto (client script) | ✅ Auto (client script) |
+| **Binary install required** | ⚠️ Yes (Go to build OR pre-built binary) | ✅ No (pure shell/bat) | ✅ No (pure shell/bat) | ✅ No (pure shell/bat) |
+| **Windows support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **macOS support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Linux support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+
+**In short:** anycert **Profile [4] Generate Only** is the closest equivalent to mkcert — both just generate a trusted cert and let you configure the service yourself. **Profile [3] Custom Path** goes one step further by auto-copying certs to your service directory and reloading it. **Profile [1] Nginx SSL Proxy** is the full-stack option that mkcert doesn't offer at all — it wraps your plain HTTP services in HTTPS automatically, with no changes to your existing apps.
+
+If you're already happy with mkcert for simple local dev on a single machine, great. Choose anycert when you need **LAN-wide trust distribution**, **multi-device client setup automation**, or **automatic proxy wrapping** without touching your existing services.
+
+---
+
+## Key Concepts
+
+### 💡 10-Year CA vs. 825-Day Server Cert
+
+**Why is the Root CA valid for 10 years (3650 days), while the server cert is only 825 days?**
+Modern operating systems and browsers (like Apple iOS/macOS Safari and Google Chrome) enforce a strict security policy: any leaf SSL/TLS server certificate signed by a private CA must have a maximum validity of **825 days** (approx. 2.2 years). If it exceeds 825 days, the browser will block the connection with an invalid certificate warning.
+
+To bypass this restriction while providing a seamless user experience, `anycert` uses a dual-layer setup:
+1. **Root CA (10 years)**: Installed and trusted on the client device. It remains unchanged.
+2. **Server Certificate (825 days)**: Installed on the server.
+
+Since the Root CA trusted by your clients remains unchanged, **when the server certificate expires, you only run the script on the server to regenerate it. The clients will automatically trust it without any re-importing or reconfiguration.** This achieves the "configure once, trusted forever" convenience.
+
+### 💡 Design Philosophy: Port Offsetting vs. Subdomains
+
+In team environments or local development (**specifically when using Service Profile [1] - Nginx SSL Proxy**), a common question is: "Why not map services to subdomains like `https://app1.demo.local` on port 443, instead of using a single FQDN with different ports (e.g., `:13000`, `:16502`)?"
+
+This is a deliberate design choice to eliminate the **"Hosts Modification Hell"** problem:
+
+| Feature | Option A: Subdomain Routing (Port 443) | Option B: Anycert's Port Offsetting (Shared FQDN) |
+| :--- | :--- | :--- |
+| **URL Look** | Clean (e.g., `https://llmchat.demo.local`) | Contains port (e.g., `https://server.demo.local:13000`) |
+| **Adding a Service** | ❌ **Every developer/client machine must modify their `hosts` file**. Each new web service requires updating `/etc/hosts` on all client PCs, or DNS resolution will fail. If you have a self-hosted DNS (e.g., Pi-hole, Unbound) or router with built-in DNS capabilities, you can configure subdomain resolution on the DNS server/router, but this requires admin privileges. | ⚡ **Clients never have to update again**! Because all services share the same FQDN, clients set up hosts once on Day 1, and can immediately connect to any new service on different ports. |
+| **Cert Management** | ❌ Requires issuing certificates for each subdomain, or managing complex self-signed Wildcard certs. | 🛡️ Single certificate containing IP SANs. Nginx reloads automatically. Setup overhead is zero. |
+
+**Conclusion: The biggest pain point in self-hosted development environments isn't remembering port numbers — it's updating hosts files on client machines. Anycert's Port Offsetting design is the most practical, zero-maintenance solution.**
+
+---
+
+## 🔒 Why Local HTTPS Matters
 
 Using HTTPS on a local area network (LAN) provides critical benefits beyond simply **eliminating browser warning screens**:
 
@@ -79,31 +139,20 @@ Modern browsers (such as Google Chrome) enforce a strict "Insecure Downloads" po
 
 ---
 
-## 💡 Key Mechanism: 10-Year CA vs. 825-Day Server Cert
+## File Description
 
-**Why is the Root CA valid for 10 years (3650 days), while the server cert is only 825 days?**
-Modern operating systems and browsers (like Apple iOS/macOS Safari and Google Chrome) enforce a strict security policy: any leaf SSL/TLS server certificate signed by a private CA must have a maximum validity of **825 days** (approx. 2.2 years). If it exceeds 825 days, the browser will block the connection with an invalid certificate warning.
+### Server-side (Generator & Installer)
+| File | Platform | Usage |
+|------|----------|-------|
+| `anycert.sh` | Linux (including WSL) / macOS Server | Generates Root CA + Server cert, supports PVE, Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
+| `anycert.bat` | Windows Server | Generates Root CA + Server cert, supports Nginx SSL Proxy (Recommended), Custom Paths, and reload commands |
 
-To bypass this restriction while providing a seamless user experience, `anycert` uses a dual-layer setup:
-1. **Root CA (10 years)**: Installed and trusted on the client device. It remains unchanged.
-2. **Server Certificate (825 days)**: Installed on the server.
-Since the Root CA trusted by your clients remains unchanged, **when the server certificate expires, you only run the script on the server to regenerate it. The clients will automatically trust it without any re-importing or reconfiguration.** This achieves the "configure once, trusted forever" convenience.
-
----
-
-## 💡 Design Philosophy: Why Port Offsetting instead of Subdomains?
-
-In team environments or local development (**specifically when using Service Profile [1] - Nginx SSL Proxy**), a common question is: "Why not map services to subdomains like `https://app1.demo.local` on port 443, instead of using a single FQDN with different ports (e.g., `:13000`, `:16502`)?"
-
-This is a deliberate design choice to save you and your team from the notorious **"Hosts Modification Hell"**:
-
-| Feature | Option A: Subdomain Routing (Port 443) | Option B: Anycert's Port Offsetting (Shared FQDN) |
-| :--- | :--- | :--- |
-| **URL Look** | Clean (e.g., `https://llmchat.demo.local`) | Contains port (e.g., `https://server.demo.local:13000`) |
-| **Adding a Service** | ❌ **Every developer/client machine must modify their `hosts` file**. Each new web service requires updating `/etc/hosts` on all client PCs, or DNS resolution will fail. | ⚡ **Clients never have to update again**! Because all services share the same FQDN, clients set up hosts once on Day 1, and can immediately connect to any new service on different ports. |
-| **Cert Management** | ❌ Requires issuing certificates for each subdomain, or managing complex self-signed Wildcard certs. | 🛡️ Single certificate containing IP SANs. Nginx reloads automatically. Setup overhead is zero. |
-
-**Conclusion: The biggest pain point in self-hosted development environments isn't remembering port numbers—it's updating hosts files on client machines. Anycert's Port Offsetting design is the most practical, zero-maintenance solution for lazy developers.**
+### Client-side (Downloader & Truster)
+| File | Platform | Usage |
+|------|----------|-------|
+| `anycert-windows.bat` | Windows Client | Downloads CA cert, updates hosts, imports to Windows Trust Store |
+| `anycert-linux.sh` | Linux Client (Ubuntu/Debian) | Downloads CA cert, updates hosts, imports to system and browser (Chrome/Firefox) Trust Stores |
+| `anycert-macos.sh` | macOS Client | Downloads CA cert, updates hosts, imports to macOS Keychain |
 
 ---
 
@@ -122,10 +171,10 @@ The script will:
 1. Auto-detect your IP, hostname, and FQDN. You can confirm them and **optionally input additional space-separated IP addresses** (e.g. Tailscale IP, VPN IP, or other LAN IPs) to be included in the certificate's SAN (Subject Alternative Name) and Nginx's `server_name` rules.
 2. Let you choose a deployment profile (offers **4 options** on standard servers, and auto-detects Proxmox VE to offer **5 options**):
     - **[1] Auto-Setup Nginx SSL Proxy [Single-Host] [Lazy-Friendly / Recommended]**: Scans listening TCP ports, lets you pick which ones to expose, automatically installs Nginx, and wraps local HTTP ports into HTTPS (`Port + offset` to `HTTP Port`). **The offset defaults to 10000** (e.g. `3000 -> 13000`).
-    - **[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]**: Specifically for dedicated Gateway VMs/hosts. Bypasses local port scans, prompts for backend `IP:PORT` mappings, and **defaults to no port offset** (1-to-1 mapping, e.g., HTTPS `3000` proxies to backend `3000`).
+    - **[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host]**: Specifically for dedicated Gateway VMs/hosts. Bypasses local port scans, prompts for backend `IP:PORT` mappings, and **defaults to no port offset** (1-to-1 mapping, e.g., HTTPS `3000` proxies to backend `3000` directly).
     - **[3] Custom Path**: Installs certs to custom target paths and runs a custom service reload command (for services that **already support native HTTPS**).
-    - **[4] Generate Only [Painful / Hard Way]**: Just generates the certificates in `/etc/anycert/` for manual setup.
-   - **[5] Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
+    - **[4] Generate Only**: Just generates the certificates in `/etc/anycert/` for manual setup.
+    - **[5] Proxmox VE (PVE)**: *(Only displayed on PVE systems)* Automatically backs up and replaces the default PVE certs, then restarts `pveproxy`.
 
 > 💡 **Tip (Local Browser Access on Server)**
 > If you want the browser running on this server itself (e.g. to access local HTTPS wrappers on the server machine) to trust the CA, you do not need to look for server-side imports. You can simply run the client script (`anycert-macos.sh` or `anycert-linux.sh`) locally on this server. Specify `127.0.0.1` as the Server IP and select the local CA import option, and it will configure your hosts, Keychain, and Chrome/Firefox NSS databases automatically!
@@ -286,8 +335,8 @@ Restart your browser and access your server securely via FQDN or IP:
 
 ## Deployment Examples
 
-### 1. Nginx Automated Reverse Proxy (Service Profile [1] — Auto-Setup Nginx SSL Proxy) (Recommended for single-host multi-service environments)
-If you run multiple HTTP services concurrently on the **same machine** (e.g., Ollama, Next.js, Vite, OpenClaw), choose **Service Profile [1] Auto-Setup Nginx SSL Proxy**:
+### 1. Nginx Automated Reverse Proxy (Profile [1] — Auto-Setup Nginx SSL Proxy)
+Recommended for single-host multi-service environments. If you run multiple HTTP services concurrently on the **same machine** (e.g., Ollama, Next.js, Vite, OpenClaw), choose **Service Profile [1] Auto-Setup Nginx SSL Proxy**:
 - The script automatically scans active listening TCP ports on the server and lists them as tips.
 - Enter the ports you wish to wrap in SSL. Nginx will automatically map them to `HTTPS Port + offset` (defaults to 10000, customizable):
   - `https://mysrv:13000` ➔ proxies to local `http://localhost:3000` (LLMChat / Next.js)
@@ -295,8 +344,8 @@ If you run multiple HTTP services concurrently on the **same machine** (e.g., Ol
   - `https://mysrv:17860` ➔ proxies to local `http://localhost:7860` (Gradio app)
 - **No changes to Docker containers or original app configurations are needed**. Nginx wraps them in TLS seamlessly on the host.
 
-### 2. Nginx SSL Gateway（Service Profile [2] — Auto-Setup Nginx SSL Gateway）(Dedicated Gateway / Multi-Host)
-This profile turns your machine into a **dedicated Gateway VM/LXC** (Host N) that decrypts HTTPS traffic and forwards it to **other backend servers with different IPs** across your LAN. There is **no port offset by default** — the Gateway maps HTTPS traffic **1-to-1** to backend ports. Enter the backend `IP:PORT` mappings directly (the script skips local port scanning):
+### 2. Nginx SSL Gateway (Profile [2] — Auto-Setup Nginx SSL Gateway)
+Dedicated Gateway / Multi-Host. This profile turns your machine into a **dedicated Gateway VM/LXC** (Host N) that decrypts HTTPS traffic and forwards it to **other backend servers with different IPs** across your LAN. There is **no port offset by default** — the Gateway maps HTTPS traffic **1-to-1** to backend ports. Enter the backend `IP:PORT` mappings directly (the script skips local port scanning):
 
   - `https://gateway.demo.local:8006` ➔ proxies to remote `http://172.16.1.1:8006` (PVE Web on Host A)
   - `https://gateway.demo.local:3000` ➔ proxies to remote `http://172.16.1.2:3000` (Open WebUI on Host B)
@@ -317,27 +366,26 @@ This profile turns your machine into a **dedicated Gateway VM/LXC** (Host N) tha
 >
 > *Only run `anycert.sh` on Host N (172.16.1.100)* — choose Option `[2]`, enter the full backend list (e.g. `172.16.1.1:8006 172.16.1.2:3000 172.16.1.3:8080 ...`) with offset `0`. Then run the client script on your laptop pointing to Host N's IP (`172.16.1.100`). Your laptop can now securely access every service via `https://gateway.demo.local:<port>`.
 
-### 3. OpenMediaVault (OMV)（Service Profile [3] — Custom Path）
+### 3. OpenMediaVault (OMV) (Profile [3] — Custom Path)
 OMV uses Nginx to serve its Web UI. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/ssl/certs/openmediavault-webgui.crt`
 - Key target path: `/etc/ssl/private/openmediavault-webgui.key`
 - Reload command: `systemctl restart nginx`
 
-### 4. Unraid（Service Profile [3] — Custom Path）
+### 4. Unraid (Profile [3] — Custom Path)
 Unraid stores its SSL certificate in the USB flash configuration. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/boot/config/ssl/certs/cert.pem`
 - Key target path: `/boot/config/ssl/certs/key.pem`
 - Reload command: `/etc/rc.d/rc.nginx reload`
 
-### 5. VMware ESXi（Service Profile [3] — Custom Path）
+### 5. VMware ESXi (Profile [3] — Custom Path)
 ESXi hosts store their web console certificates in a fixed location. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/vmware/ssl/rui.crt`
 - Key target path: `/etc/vmware/ssl/rui.key`
 - Reload command: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
 
-### 6. Nginx Manual Reverse Proxy (Service Profile [4] — Generate Only) (e.g., local LLM Server / Open WebUI)
+### 6. Nginx Manual Reverse Proxy (Profile [4] — Generate Only)
 You can use Nginx manually as a reverse proxy to add HTTPS to local HTTP services like `http://localhost:3000` (e.g. Open WebUI). Choose Service Profile [4] **Generate Only** to generate the cert files, then manually reference them in your Nginx config:
-In your Nginx site config:
 ```nginx
 server {
     listen 443 ssl;
@@ -357,7 +405,7 @@ The corresponding fields are:
 - Key target path: `/etc/nginx/ssl/anycert.key`
 - Reload command: `nginx -s reload`
 
-### 7. Proxmox VE（Service Profile [5] — Proxmox VE (PVE)）
+### 7. Proxmox VE (Profile [5] — Proxmox VE)
 If your server is running Proxmox VE, `anycert.sh` will automatically detect the PVE environment and offer an extra **[5] Proxmox VE (PVE)** option in the Service Profile menu. Selecting this option will automatically:
 - Back up the existing PVE web proxy certificates (`/etc/pve/local/pveproxy-ssl.pem` and `pveproxy-ssl.key`).
 - Overwrite them with the anycert-issued certificate and key.
@@ -365,7 +413,7 @@ If your server is running Proxmox VE, `anycert.sh` will automatically detect the
 
 No manual path input or restart command is needed — the script handles the entire PVE web console (`https://<ip>:8006`) HTTPS certificate deployment automatically.
 
-### 8. WSL Deployment（Service Profile [1] — Auto-Setup Nginx SSL Proxy）
+### 8. WSL Deployment (Profile [1] — Auto-Setup Nginx SSL Proxy)
 If your services (like Nginx or Docker containers) are running inside WSL 2, because WSL 2 is a Linux environment, you should **run the Linux server script directly inside the WSL terminal** instead of running the `.bat` file on the Windows host:
 1. Open your WSL terminal (e.g., Ubuntu/Debian) and run:
    ```bash
