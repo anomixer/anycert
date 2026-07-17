@@ -188,16 +188,16 @@
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | `anycert.???`        | .bat  | .sh   |  .sh  | .sh  | .sh |
-| -> server setup      | ✅    |  ✅  |       |  ✅  | ✅ |
-| local browser access | ✅    |       |       | ✅   |  ⚠️ |
-| -> need client setup?| ✅ no |       |       |  yes  |  ⚠️ |
+| -> server setup      |  ✅  |  ✅  |  ✅  | ✅  | ✅ |
+| local browser access |  ✅  |  ✅  |  ✅  | ✅  | N/A (No GUI) |
+| -> need local client setup?| ✅ no |  ✅ yes  |  ✅ yes  | ✅ yes | N/A (No GUI) |
 
 ### 2. 用戶端信任導入 (Client Setup)
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `anycert-linux.sh`    |  ✅   | ✅    |      | ✅  | ✅ |
-| `anycert-macos.sh`    |  ✅   | ✅    |      |     | ✅ |
-| `anycert-windows.bat` |  ✅   | ✅    |      | ✅  | ✅ |
+| `anycert-linux.sh`    |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| `anycert-macos.sh`    |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| `anycert-windows.bat` |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
 
 ---
 

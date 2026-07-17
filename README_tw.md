@@ -137,6 +137,25 @@ sudo bash anycert-macos.sh
 ### 3. 防止檔案下載被瀏覽器標示為不安全而封鎖 (Insecure Downloads Policy)
 現代瀏覽器（例如 Google Chrome）對普通 HTTP 連線有嚴格的「不安全下載」防護機制。當您在 HTTP 環境下從自託管服務下載檔案（如系統備份檔、應用程式 Log、AI 模型權重檔或匯出報表）時，瀏覽器會主動將其判定為風險下載並直接攔截封鎖，迫使使用者必須展開下載清單，在多層警告中手動點選「仍要保留」才能存取檔案。使用 HTTPS 可以讓本地下載完全信任，流暢完成存檔。
 
+## 支援環境與平台相容性對比表
+
+anycert 具備高度跨平台特性，並已在實際區域網路 (LAN) 環境中通過完整的實機交叉測試。以下是伺服器端部署與用戶端信任自動化的相容性矩陣：
+
+### 1. 伺服器端部署 (Server Setup)
+| 伺服器端系統與平台 | Windows | Linux | macOS | WSL 2 | Proxmox VE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| 伺服器端腳本 | `anycert.bat` | `anycert.sh` | `anycert.sh` | `anycert.sh` | `anycert.sh` |
+| **伺服器安裝部署** |  ✅  |  ✅  |  ✅  | ✅  | ✅ |
+| **伺服器本機瀏覽器安全存取** |  ✅  |  ✅  |  ✅  | ✅  | 不適用 (無 GUI) |
+| **Server 本機是否需執行用戶端導入？** | ✅ 免 |  ✅ 需  |  ✅ 需  | ✅ 需  | 不適用 (無 GUI) |
+
+### 2. 用戶端信任導入 (Client Trust Setup)
+| 用戶端系統 \ 伺服器端平台 | Windows | Linux | macOS | WSL 2 | Proxmox VE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`anycert-windows.bat` (Windows 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| **`anycert-linux.sh` (Linux 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| **`anycert-macos.sh` (macOS 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+
 ---
 
 ## 檔案說明

@@ -137,6 +137,25 @@ In shared network environments (such as offices, schools, co-living spaces, or p
 ### 3. Preventing Blocked Downloads (Insecure Downloads Policy)
 Modern browsers (such as Google Chrome) enforce a strict "Insecure Downloads" policy. If a page is loaded via an insecure connection (plain HTTP), trying to download files (like backups, application logs, AI model weights, or exported files) will trigger a warning. The browser will flag it as an insecure download, block it, and force the user to manually expand settings and select "Keep anyway" to obtain the file. Serving your local tools over HTTPS solves this, allowing downloads to complete smoothly.
 
+## Supported Environments & OS Compatibility
+
+anycert is fully cross-platform and has been thoroughly tested under real-world LAN environments. The testing matrix below showcases the compatibility of both server setup and client trust automation:
+
+### 1. Server Setup Compatibility
+| Server OS / Platform | Windows | Linux | macOS | WSL 2 | Proxmox VE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| Server Script | `anycert.bat` | `anycert.sh` | `anycert.sh` | `anycert.sh` | `anycert.sh` |
+| **Server Installation** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Local Browser Access on Server** | ✅ | ✅ | ✅ | ✅ | N/A (No GUI) |
+| **Need local client setup?** | ✅ No | ✅ Yes | ✅ Yes | ✅ Yes | N/A (No GUI) |
+
+### 2. Client Trust Automation Compatibility
+| Client OS \ Server Platform | Windows | Linux | macOS | WSL 2 | Proxmox VE |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`anycert-windows.bat` (Windows Client)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **`anycert-linux.sh` (Linux Client)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **`anycert-macos.sh` (macOS Client)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+
 ---
 
 ## File Description
