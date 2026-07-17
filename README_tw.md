@@ -196,18 +196,18 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    subgraph LAN [內網區域]
+    subgraph LAN ["內網區域"]
         Client["開發筆電 (Client)\n信任 CA & 綁定 Hosts\n(gateway.demo.local -> Host C)"]
         
-        subgraph HostC["Host C: SSL Gateway (172.16.1.3)"]
+        subgraph HostC ["Host C: SSL Gateway 172.16.1.3"]
             Nginx["Nginx SSL 代理\n(anycert 憑證)"]
         end
         
-        subgraph HostA["Host A: PVE (172.16.1.1)"]
+        subgraph HostA ["Host A: PVE 172.16.1.1"]
             PVE["PVE Web (HTTP:8006)"]
         end
         
-        subgraph HostB["Host B: App Server (172.16.1.2)"]
+        subgraph HostB ["Host B: App Server 172.16.1.2"]
             OpenWebUI["Open WebUI (HTTP:3000)"]
             Ollama["Ollama API (HTTP:11434)"]
         end
@@ -366,25 +366,31 @@ sudo bash anycert-macos.sh
 >
 > *只需在 Host N (172.16.1.100) 上執行 `anycert.sh`* — 選擇選項 `[2]`，輸入完整後端列表（如 `172.16.1.1:8006 172.16.1.2:3000 172.16.1.3:8080 ...`），偏移量設為 `0`。然後在筆電上執行用戶端腳本，Server IP 填寫 Host N 的 IP `172.16.1.100`。您的筆電即可安全無警告地以 `https://gateway.demo.local:<port>` 存取所有服務。
 
-### 3. OpenMediaVault (OMV)（Profile [3] — Custom Path）
+### 3. Custom Path (Profile [3] — 自訂路徑)
+此模式適合服務本身已支援 HTTPS (例如 OMV、IIS、Unraid、ESXi)。anycert 會自動將憑證與私鑰複製到指定位置，並自動執行您所設定的服務重啟/重載指令以套用。
+
+#### 3.1 OpenMediaVault (OMV)
 OMV 預設的 nginx 憑證路徑通常位於 `/etc/ssl/certs/`，選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/etc/ssl/certs/openmediavault-webgui.crt`
 - 金鑰目標路徑: `/etc/ssl/private/openmediavault-webgui.key`
 - 重啟指令: `systemctl restart nginx`
 
-### 4. Unraid（Profile [3] — Custom Path）
+#### 3.2 Unraid
 Unraid 的 SSL 憑證位於 USB 隨身碟掛載路徑，選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/boot/config/ssl/certs/cert.pem`
 - 金鑰目標路徑: `/boot/config/ssl/certs/key.pem`
 - 重啟指令: `/etc/rc.d/rc.nginx reload`
 
-### 5. VMware ESXi（Profile [3] — Custom Path）
+#### 3.3 VMware ESXi
 ESXi 的 Web 控制台憑證存放於主機的固定路徑中，選擇 Service Profile [3] **Custom Path** 並輸入以下路徑：
 - 憑證目標路徑: `/etc/vmware/ssl/rui.crt`
 - 金鑰目標路徑: `/etc/vmware/ssl/rui.key`
 - 重啟指令: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
 
-### 6. Nginx 手動反向代理（Profile [4] — Generate Only）
+### 4. Generate Only (Profile [4] — 僅產生憑證)
+僅產生憑證與金鑰檔案於標準目錄中，後續由使用者自行手動配置套用。
+
+#### 4.1 Nginx 手動反向代理
 您可以透過 Nginx 反向代理，為 `http://localhost:3000` (如 Open WebUI) 加上 HTTPS。選擇 Service Profile [4] **Generate Only** 產生憑證檔案後，手動在 Nginx 設定檔中指定憑證路徑：
 ```nginx
 server {
@@ -405,7 +411,7 @@ server {
 - 金鑰目標路徑: `/etc/nginx/ssl/anycert.key`
 - 重啟指令: `nginx -s reload`
 
-### 7. Proxmox VE（Profile [5] — Proxmox VE）
+### 5. Proxmox VE (Profile [5] — Proxmox VE)
 若您的伺服器為 Proxmox VE 系統，執行 `anycert.sh` 時腳本會自動偵測到 PVE 環境，並在 Service Profile 選單中多出 **[5] Proxmox VE (PVE)** 選項。選擇此選項後，腳本會自動：
 - 備份 PVE 現有的 Web 代理憑證（`/etc/pve/local/pveproxy-ssl.pem` 與 `pveproxy-ssl.key`）。
 - 將 anycert 簽發的憑證與金鑰覆蓋至 PVE 預設路徑。
@@ -413,7 +419,7 @@ server {
 
 您無需手動輸入任何路徑或重啟指令，腳本會全自動完成 PVE Web 控制臺（`https://<ip>:8006`）的 HTTPS 憑證部署。
 
-### 8. WSL 部署指引（Profile [1] — Auto-Setup Nginx SSL Proxy）
+### 6. WSL 部署指引 (Profile [1] — Auto-Setup Nginx SSL Proxy)
 如果您的服務（如 Nginx, Docker 容器等）架設在 WSL 2 中，因為 WSL 2 是 Linux 系統，您應該**直接在 WSL 終端機內執行 Linux 伺服器指令**，而不是在 Windows 宿主機執行 `.bat`：
 1. 開啟您的 WSL 終端機 (如 Ubuntu/Debian)，直接執行：
    ```bash

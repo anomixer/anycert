@@ -47,6 +47,25 @@ for cmd in ssh scp openssl security; do
         exit 1
     fi
 done
+check_ssh_host_change() {
+    local err_file="$1"
+    if [[ ! -f "$err_file" ]]; then
+        return 1
+    fi
+    if grep -q -E "REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed" "$err_file"; then
+        echo ""
+        echo -e "  ${YELLOW}[WARN] SSH host identification for ${SERVER_IP} has changed or verification failed.${RESET}"
+        echo -e "  This usually happens when the remote server is reinstalled or SSH keys are regenerated."
+        read -rp "  Would you like to automatically clear the old host key from known_hosts? [y/N]: " REMOVE_KEY
+        if [[ "$REMOVE_KEY" == "y" || "$REMOVE_KEY" == "Y" ]]; then
+            sudo -u "$SCP_USER" ssh-keygen -R "$SERVER_IP" >/dev/null 2>&1 || true
+            ssh-keygen -R "$SERVER_IP" >/dev/null 2>&1 || true
+            echo -e "  [OK] Cleared host key for ${SERVER_IP}."
+            return 0
+        fi
+    fi
+    return 1
+}
 
 mkdir -p "$DATA_DIR"
 if [[ -n "${SUDO_USER:-}" ]]; then
@@ -291,17 +310,53 @@ SCP_OK=false
 SMB_CONNECTED=false
 SMB_PASS=""
 
+ERR_TMP="/tmp/anycert_scp_err"
+rm -f "$ERR_TMP"
+
 if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
     # Windows server
     echo "  [INFO] Probing [/C:/anycert/anycert-ca.crt]..."
-    if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
-        SCP_OK=true
-    elif echo "  [INFO] Probing [/anycert/anycert-ca.crt]..." && \
-         sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
-        SCP_OK=true
-    elif echo "  [INFO] Probing legacy SCP mode [C:/anycert/anycert-ca.crt]..." && \
-         sudo -u "$SCP_USER" scp -O -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
-        SCP_OK=true
+    
+    RETRY=true
+    while [[ "$RETRY" == "true" ]]; do
+        RETRY=false
+        if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>"$ERR_TMP"; then
+            SCP_OK=true
+        else
+            if check_ssh_host_change "$ERR_TMP"; then
+                RETRY=true
+            fi
+        fi
+    done
+
+    if [[ "$SCP_OK" != "true" ]]; then
+        echo "  [INFO] Probing [/anycert/anycert-ca.crt]..."
+        RETRY=true
+        while [[ "$RETRY" == "true" ]]; do
+            RETRY=false
+            if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:/anycert/anycert-ca.crt" "$TMP_CERT" 2>"$ERR_TMP"; then
+                SCP_OK=true
+            else
+                if check_ssh_host_change "$ERR_TMP"; then
+                    RETRY=true
+                fi
+            fi
+        done
+    fi
+
+    if [[ "$SCP_OK" != "true" ]]; then
+        echo "  [INFO] Probing legacy SCP mode [C:/anycert/anycert-ca.crt]..."
+        RETRY=true
+        while [[ "$RETRY" == "true" ]]; do
+            RETRY=false
+            if sudo -u "$SCP_USER" scp -O -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${SSH_USER}@${SERVER_IP}:C:/anycert/anycert-ca.crt" "$TMP_CERT" 2>"$ERR_TMP"; then
+                SCP_OK=true
+            else
+                if check_ssh_host_change "$ERR_TMP"; then
+                    RETRY=true
+                fi
+            fi
+        done
     fi
     
     if [[ "$SCP_OK" != "true" ]]; then
@@ -340,11 +395,31 @@ if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
 else
     # Linux server
     echo "  [INFO] Probing [${CA_REMOTE}]..."
-    if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$TMP_CERT" 2>/dev/null; then
-        SCP_OK=true
-    elif echo "  [INFO] Probing backup path [/root/anycert/anycert-ca.crt]..." && \
-         sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$TMP_CERT" 2>/dev/null; then
-        SCP_OK=true
+    RETRY=true
+    while [[ "$RETRY" == "true" ]]; do
+        RETRY=false
+        if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$TMP_CERT" 2>"$ERR_TMP"; then
+            SCP_OK=true
+        else
+            if check_ssh_host_change "$ERR_TMP"; then
+                RETRY=true
+            fi
+        fi
+    done
+
+    if [[ "$SCP_OK" != "true" ]]; then
+        echo "  [INFO] Probing backup path [/root/anycert/anycert-ca.crt]..."
+        RETRY=true
+        while [[ "$RETRY" == "true" ]]; do
+            RETRY=false
+            if sudo -u "$SCP_USER" scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$TMP_CERT" 2>"$ERR_TMP"; then
+                SCP_OK=true
+            else
+                if check_ssh_host_change "$ERR_TMP"; then
+                    RETRY=true
+                fi
+            fi
+        done
     fi
     
     if [[ "$SCP_OK" != "true" ]]; then
@@ -358,6 +433,8 @@ else
         exit 1
     fi
 fi
+
+rm -f "$ERR_TMP"
 
 # Move from /tmp to final DATA_DIR destination
 cp "$TMP_CERT" "$CA_LOCAL"

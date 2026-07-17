@@ -196,18 +196,18 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    subgraph LAN [Local Network Area]
+    subgraph LAN ["Local Network Area"]
         Client["Client Laptop\nTrusts CA & Binds Hosts\n(gateway.demo.local -> Host C)"]
         
-        subgraph HostC["Host C: SSL Gateway (172.16.1.3)"]
+        subgraph HostC ["Host C: SSL Gateway 172.16.1.3"]
             Nginx["Nginx SSL Proxy\n(anycert Certificate)"]
         end
         
-        subgraph HostA["Host A: PVE (172.16.1.1)"]
+        subgraph HostA ["Host A: PVE 172.16.1.1"]
             PVE["PVE Web (HTTP:8006)"]
         end
         
-        subgraph HostB["Host B: App Server (172.16.1.2)"]
+        subgraph HostB ["Host B: App Server 172.16.1.2"]
             OpenWebUI["Open WebUI (HTTP:3000)"]
             Ollama["Ollama API (HTTP:11434)"]
         end
@@ -366,25 +366,31 @@ Dedicated Gateway / Multi-Host. This profile turns your machine into a **dedicat
 >
 > *Only run `anycert.sh` on Host N (172.16.1.100)* — choose Option `[2]`, enter the full backend list (e.g. `172.16.1.1:8006 172.16.1.2:3000 172.16.1.3:8080 ...`) with offset `0`. Then run the client script on your laptop pointing to Host N's IP (`172.16.1.100`). Your laptop can now securely access every service via `https://gateway.demo.local:<port>`.
 
-### 3. OpenMediaVault (OMV) (Profile [3] — Custom Path)
+### 3. Custom Path (Profile [3])
+This profile is best when the target service already terminates HTTPS (e.g. OMV, IIS, Unraid, ESXi). anycert will automatically copy the cert and private key to the specified locations, and then run your custom service reload command to apply them.
+
+#### 3.1 OpenMediaVault (OMV)
 OMV uses Nginx to serve its Web UI. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/ssl/certs/openmediavault-webgui.crt`
 - Key target path: `/etc/ssl/private/openmediavault-webgui.key`
 - Reload command: `systemctl restart nginx`
 
-### 4. Unraid (Profile [3] — Custom Path)
+#### 3.2 Unraid
 Unraid stores its SSL certificate in the USB flash configuration. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/boot/config/ssl/certs/cert.pem`
 - Key target path: `/boot/config/ssl/certs/key.pem`
 - Reload command: `/etc/rc.d/rc.nginx reload`
 
-### 5. VMware ESXi (Profile [3] — Custom Path)
+#### 3.3 VMware ESXi
 ESXi hosts store their web console certificates in a fixed location. Choose Service Profile [3] **Custom Path** and enter:
 - Cert target path: `/etc/vmware/ssl/rui.crt`
 - Key target path: `/etc/vmware/ssl/rui.key`
 - Reload command: `/etc/init.d/hostd restart && /etc/init.d/vpxa restart`
 
-### 6. Nginx Manual Reverse Proxy (Profile [4] — Generate Only)
+### 4. Generate Only (Profile [4] — Manual Deploy)
+Issues and saves certificate files in the standard directory only, and leaves configuration entirely to the user.
+
+#### 4.1 Nginx Manual Reverse Proxy
 You can use Nginx manually as a reverse proxy to add HTTPS to local HTTP services like `http://localhost:3000` (e.g. Open WebUI). Choose Service Profile [4] **Generate Only** to generate the cert files, then manually reference them in your Nginx config:
 ```nginx
 server {
@@ -405,7 +411,7 @@ The corresponding fields are:
 - Key target path: `/etc/nginx/ssl/anycert.key`
 - Reload command: `nginx -s reload`
 
-### 7. Proxmox VE (Profile [5] — Proxmox VE)
+### 5. Proxmox VE (Profile [5] — Proxmox VE)
 If your server is running Proxmox VE, `anycert.sh` will automatically detect the PVE environment and offer an extra **[5] Proxmox VE (PVE)** option in the Service Profile menu. Selecting this option will automatically:
 - Back up the existing PVE web proxy certificates (`/etc/pve/local/pveproxy-ssl.pem` and `pveproxy-ssl.key`).
 - Overwrite them with the anycert-issued certificate and key.
@@ -413,7 +419,7 @@ If your server is running Proxmox VE, `anycert.sh` will automatically detect the
 
 No manual path input or restart command is needed — the script handles the entire PVE web console (`https://<ip>:8006`) HTTPS certificate deployment automatically.
 
-### 8. WSL Deployment (Profile [1] — Auto-Setup Nginx SSL Proxy)
+### 6. WSL Deployment (Profile [1] — Auto-Setup Nginx SSL Proxy)
 If your services (like Nginx or Docker containers) are running inside WSL 2, because WSL 2 is a Linux environment, you should **run the Linux server script directly inside the WSL terminal** instead of running the `.bat` file on the Windows host:
 1. Open your WSL terminal (e.g., Ubuntu/Debian) and run:
    ```bash

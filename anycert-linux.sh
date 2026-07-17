@@ -84,6 +84,28 @@ auto_install_cmd() {
     echo "  [OK] Successfully installed: $PKG"
 }
 
+check_ssh_host_change() {
+    local err_file="$1"
+    if [[ ! -f "$err_file" ]]; then
+        return 1
+    fi
+    if grep -q -E "REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed" "$err_file"; then
+        echo ""
+        echo -e "  ${YELLOW}[WARN] SSH host identification for ${SERVER_IP} has changed or verification failed.${RESET}"
+        echo -e "  This usually happens when the remote server is reinstalled or SSH keys are regenerated."
+        read -rp "  Would you like to automatically clear the old host key from known_hosts? [y/N]: " REMOVE_KEY
+        if [[ "$REMOVE_KEY" == "y" || "$REMOVE_KEY" == "Y" ]]; then
+            ssh-keygen -R "$SERVER_IP" >/dev/null 2>&1 || true
+            if [[ -n "${REAL_USER:-}" && "$REAL_USER" != "root" ]]; then
+                sudo -u "$REAL_USER" ssh-keygen -R "$SERVER_IP" >/dev/null 2>&1 || true
+            fi
+            echo -e "  [OK] Cleared host key for ${SERVER_IP}."
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # ── Check / auto-install dependencies ────────────────────────
 auto_install_cmd ssh openssh-client
 auto_install_cmd scp openssh-client
@@ -466,9 +488,25 @@ echo
 # Try probing download paths based on server OS
 SMB_CONNECTED=false
 SMB_PASS=""
+ERR_TMP="/tmp/anycert_scp_err"
+rm -f "$ERR_TMP"
+
 if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
     # Windows server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>/dev/null; then
+    SCP_OK=false
+    RETRY=true
+    while [[ "$RETRY" == "true" ]]; do
+        RETRY=false
+        if scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/C:/anycert/anycert-ca.crt" "$CA_LOCAL" 2>"$ERR_TMP"; then
+            SCP_OK=true
+        else
+            if check_ssh_host_change "$ERR_TMP"; then
+                RETRY=true
+            fi
+        fi
+    done
+
+    if [[ "$SCP_OK" != "true" ]]; then
         echo "  [INFO] SCP download failed. Probing Windows SMB share [C$]..."
         
         # Check/install smbclient on Linux client
@@ -513,9 +551,34 @@ if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
     fi
 else
     # Linux server
-    if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>/dev/null; then
+    SCP_OK=false
+    RETRY=true
+    while [[ "$RETRY" == "true" ]]; do
+        RETRY=false
+        if scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:${CA_REMOTE}" "$CA_LOCAL" 2>"$ERR_TMP"; then
+            SCP_OK=true
+        else
+            if check_ssh_host_change "$ERR_TMP"; then
+                RETRY=true
+            fi
+        fi
+    done
+
+    if [[ "$SCP_OK" != "true" ]]; then
         echo "  [INFO] Linux default path failed. Probing backup path (/root/anycert/anycert-ca.crt)..."
-        if ! scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL"; then
+        RETRY2=true
+        while [[ "$RETRY2" == "true" ]]; do
+            RETRY2=false
+            if scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "${SSH_USER}@${SERVER_IP}:/root/anycert/anycert-ca.crt" "$CA_LOCAL" 2>"$ERR_TMP"; then
+                SCP_OK=true
+            else
+                if check_ssh_host_change "$ERR_TMP"; then
+                    RETRY2=true
+                fi
+            fi
+        done
+
+        if [[ "$SCP_OK" != "true" ]]; then
             echo
             echo -e "  ${RED}[ERROR]${RESET} Certificate download failed! Please check:"
             echo -e "  ${YELLOW}1. The server-side anycert.sh has NOT been executed yet.${RESET}"
@@ -527,6 +590,8 @@ else
         fi
     fi
 fi
+
+rm -f "$ERR_TMP"
 
 echo
 echo "  [OK] Certificate downloaded successfully!"

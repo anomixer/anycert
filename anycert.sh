@@ -879,7 +879,8 @@ install_cert() {
       local P
       P=$(echo "$M" | cut -d: -f1)
       local BIP
-      BIP=$(echo "$M" | cut -d: -f2)
+      BIP=$(echo "$M" | cut -d: -f2 -s)
+      [[ -z "$BIP" ]] && BIP="127.0.0.1"
       local SSL_P
       SSL_P=$(resolve_ssl_port "$P")
 
@@ -1191,21 +1192,45 @@ sanitize_proxyports() {
   local SP_NEW=""
   for P in $PROXY_PORTS; do
     local SP_T="$P"
-    local PORT_PART
-    PORT_PART=$(echo "$SP_T" | cut -d: -f1)
-    local IP_PART
-    IP_PART=$(echo "$SP_T" | cut -d: -f2 -s)
-    [[ -z "$IP_PART" ]] && IP_PART="127.0.0.1"
+    # Strip leading +, -, or : prefix
+    [[ "${SP_T:0:1}" == "+" ]] && SP_T="${SP_T:1}"
+    [[ "${SP_T:0:1}" == "-" ]] && SP_T="${SP_T:1}"
+    [[ "${SP_T:0:1}" == ":" ]] && SP_T="${SP_T:1}"
 
-    # Strip leading +, -, or : prefix of the port part
-    [[ "${PORT_PART:0:1}" == "+" ]] && PORT_PART="${PORT_PART:1}"
-    [[ "${PORT_PART:0:1}" == "-" ]] && PORT_PART="${PORT_PART:1}"
-    [[ "${PORT_PART:0:1}" == ":" ]] && PORT_PART="${PORT_PART:1}"
+    local PORT_PART=""
+    local IP_PART=""
+    if [[ "$SP_T" == *":"* ]]; then
+      local p1 p2
+      p1=$(echo "$SP_T" | cut -d: -f1)
+      p2=$(echo "$SP_T" | cut -d: -f2-)
+      if [[ "$p1" =~ ^[0-9]+$ ]]; then
+        PORT_PART="$p1"
+        IP_PART="$p2"
+      else
+        PORT_PART="$p2"
+        IP_PART="$p1"
+      fi
+    else
+      PORT_PART="$SP_T"
+      IP_PART=""
+    fi
+
+    local MAPPING=""
+    if [[ "$PROFILE" == "nginx_gateway" ]]; then
+      [[ -z "$IP_PART" ]] && IP_PART="127.0.0.1"
+      MAPPING="${PORT_PART}:${IP_PART}"
+    else
+      if [[ -n "$IP_PART" && "$IP_PART" != "127.0.0.1" ]]; then
+        MAPPING="${PORT_PART}:${IP_PART}"
+      else
+        MAPPING="${PORT_PART}"
+      fi
+    fi
 
     if [[ -z "$SP_NEW" ]]; then
-      SP_NEW="${PORT_PART}:${IP_PART}"
+      SP_NEW="${MAPPING}"
     else
-      SP_NEW="$SP_NEW ${PORT_PART}:${IP_PART}"
+      SP_NEW="$SP_NEW ${MAPPING}"
     fi
   done
   # Sort numerically ascending based on the port number (first field before colon), and deduplicate
@@ -1217,6 +1242,7 @@ process_port_adjustments() {
   if [[ "$NEW_PROXY_PORTS" != *"-"* && "$NEW_PROXY_PORTS" != *"+"* ]]; then
     # Neither '+' nor '-' found, simple overwrite
     PROXY_PORTS="$NEW_PROXY_PORTS"
+    sanitize_proxyports
     return
   fi
 
@@ -1224,19 +1250,31 @@ process_port_adjustments() {
   for TOKEN in $NEW_PROXY_PORTS; do
     # Strip all leading +, -, : prefixes first to get the clean port or mapping
     local TARGET_ITEM="$TOKEN"
+    local FIRST_CHAR="${TARGET_ITEM:0:1}"
     [[ "${TARGET_ITEM:0:1}" == "+" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
     [[ "${TARGET_ITEM:0:1}" == "-" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
     [[ "${TARGET_ITEM:0:1}" == ":" ]] && TARGET_ITEM="${TARGET_ITEM:1}"
 
-    # Get port and IP parts
-    local TARGET_PORT
-    TARGET_PORT=$(echo "$TARGET_ITEM" | cut -d: -f1)
-    local TARGET_IP
-    TARGET_IP=$(echo "$TARGET_ITEM" | cut -d: -f2 -s)
-    [[ -z "$TARGET_IP" ]] && TARGET_IP="127.0.0.1"
+    # Parse port and IP parts
+    local TARGET_PORT=""
+    local TARGET_IP=""
+    if [[ "$TARGET_ITEM" == *":"* ]]; then
+      local p1 p2
+      p1=$(echo "$TARGET_ITEM" | cut -d: -f1)
+      p2=$(echo "$TARGET_ITEM" | cut -d: -f2-)
+      if [[ "$p1" =~ ^[0-9]+$ ]]; then
+        TARGET_PORT="$p1"
+        TARGET_IP="$p2"
+      else
+        TARGET_PORT="$p2"
+        TARGET_IP="$p1"
+      fi
+    else
+      TARGET_PORT="$TARGET_ITEM"
+      TARGET_IP=""
+    fi
 
-    # Determine if original token starts with '-'
-    if [[ "$TOKEN" =~ ^- ]]; then
+    if [[ "$FIRST_CHAR" == "-" ]]; then
       # Remove by port
       local NEW_LIST=""
       for P in $PROXY_PORTS; do
@@ -1249,9 +1287,17 @@ process_port_adjustments() {
       PROXY_PORTS=$(echo "$NEW_LIST" | xargs)
     else
       # Add or update
-      if [[ "$PROFILE" == "nginx_gateway" && "$TARGET_IP" == "127.0.0.1" ]]; then
-        read -rp "  Enter backend IP for port $TARGET_PORT [default: 127.0.0.1]: " INPUT_BIP
-        [[ -n "$INPUT_BIP" ]] && TARGET_IP="$INPUT_BIP"
+      if [[ "$PROFILE" == "nginx_gateway" ]]; then
+        if [[ -z "$TARGET_IP" || "$TARGET_IP" == "127.0.0.1" ]]; then
+          # If target IP is empty or default, prompt for it
+          read -rp "  Enter backend IP for port $TARGET_PORT [default: 127.0.0.1]: " INPUT_BIP
+          TARGET_IP=${INPUT_BIP:-127.0.0.1}
+        fi
+      else
+        # In proxy mode, only clear IP if it is the default 127.0.0.1
+        if [[ "$TARGET_IP" == "127.0.0.1" ]]; then
+          TARGET_IP=""
+        fi
       fi
 
       local ALREADY_HAS=0
@@ -1261,19 +1307,36 @@ process_port_adjustments() {
         OP=$(echo "$P" | cut -d: -f1)
         if [[ "$OP" == "$TARGET_PORT" ]]; then
           # Update existing mapping
-          NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+          if [[ "$PROFILE" == "nginx_gateway" ]]; then
+            NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+          else
+            if [[ -n "$TARGET_IP" && "$TARGET_IP" != "127.0.0.1" ]]; then
+              NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+            else
+              NEW_LIST="$NEW_LIST ${TARGET_PORT}"
+            fi
+          fi
           ALREADY_HAS=1
         else
           NEW_LIST="$NEW_LIST $P"
         fi
       done
       if [[ $ALREADY_HAS -eq 0 ]]; then
-        NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+        if [[ "$PROFILE" == "nginx_gateway" ]]; then
+          NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+        else
+          if [[ -n "$TARGET_IP" && "$TARGET_IP" != "127.0.0.1" ]]; then
+            NEW_LIST="$NEW_LIST ${TARGET_PORT}:${TARGET_IP}"
+          else
+            NEW_LIST="$NEW_LIST ${TARGET_PORT}"
+          fi
+        fi
       fi
       PROXY_PORTS=$(echo "$NEW_LIST" | xargs)
     fi
   done
   PROXY_PORTS=$(echo "$PROXY_PORTS" | xargs)
+  sanitize_proxyports
 }
 
 check_existing_cert() {

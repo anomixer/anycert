@@ -1409,26 +1409,66 @@ goto gateway_print_flow
 :sanitize_proxyports
 if "!PROXY_PORTS!"=="" exit /b 0
 set "SP_TMP="
-for %%P in (!PROXY_PORTS!) do (
-    set "SP_T=%%P"
-    set "PORT_PART="
-    set "IP_PART="
-    for /f "tokens=1,2 delims=:" %%X in ("!SP_T!") do (
-        set "PORT_PART=%%X"
-        set "IP_PART=%%Y"
-    )
-    if "!IP_PART!"=="" set "IP_PART=127.0.0.1"
+set "TEMP_SP_PORTS=!PROXY_PORTS!"
 
-    if "!PORT_PART:~0,1!"=="+" set "PORT_PART=!PORT_PART:~1!"
-    if "!PORT_PART:~0,1!"=="-" set "PORT_PART=!PORT_PART:~1!"
-    if "!PORT_PART:~0,1!"==":" set "PORT_PART=!PORT_PART:~1!"
-
-    if "!SP_TMP!"=="" (
-        set "SP_TMP=!PORT_PART!:!IP_PART!"
-    ) else (
-        set "SP_TMP=!SP_TMP! !PORT_PART!:!IP_PART!"
-    )
+:sanitize_loop
+if "!TEMP_SP_PORTS!"=="" goto sanitize_done
+for /f "tokens=1*" %%A in ("!TEMP_SP_PORTS!") do (
+    set "SP_T=%%A"
+    set "TEMP_SP_PORTS=%%B"
 )
+
+if "!SP_T:~0,1!"=="+" set "SP_T=!SP_T:~1!"
+if "!SP_T:~0,1!"=="-" set "SP_T=!SP_T:~1!"
+if "!SP_T:~0,1!"==":" set "SP_T=!SP_T:~1!"
+
+set "PORT_PART="
+set "IP_PART="
+
+echo !SP_T!| findstr /c:":" >nul
+if not !errorlevel! equ 0 goto sanitize_no_colon
+
+for /f "tokens=1* delims=:" %%X in ("!SP_T!") do (
+    set "P1=%%X"
+    set "P2=%%Y"
+)
+set "IS_NUM=1"
+for /f "delims=0123456789" %%A in ("!P1!") do set "IS_NUM=0"
+if "!IS_NUM!"=="1" (
+    set "PORT_PART=!P1!"
+    set "IP_PART=!P2!"
+) else (
+    set "PORT_PART=!P2!"
+    set "IP_PART=!P1!"
+)
+goto sanitize_check_profile
+
+:sanitize_no_colon
+set "PORT_PART=!SP_T!"
+set "IP_PART="
+
+:sanitize_check_profile
+if not "!PROFILE!"=="nginx_gateway" goto sanitize_proxy_mode
+if "!IP_PART!"=="" set "IP_PART=127.0.0.1"
+set "MAPPING=!PORT_PART!:!IP_PART!"
+goto sanitize_append
+
+:sanitize_proxy_mode
+if not "!IP_PART!"=="" if not "!IP_PART!"=="127.0.0.1" (
+    set "MAPPING=!PORT_PART!:!IP_PART!"
+    goto sanitize_append
+)
+set "MAPPING=!PORT_PART!"
+
+:sanitize_append
+if "!SP_TMP!"=="" (
+    set "SP_TMP=!MAPPING!"
+) else (
+    set "SP_TMP=!SP_TMP! !MAPPING!"
+)
+goto sanitize_loop
+
+:sanitize_done
 set "PROXY_PORTS=!SP_TMP!"
 goto :sort_proxyports
 
@@ -1469,16 +1509,18 @@ exit /b 0
 :process_port_adjustments
 :: Check if the input contains '+' or '-' using native string replacement
 if "!NEW_PROXY_PORTS!"=="!NEW_PROXY_PORTS:-=!" if "!NEW_PROXY_PORTS!"=="!NEW_PROXY_PORTS:+=!" (
-    :: Neither '+' nor '-' found, simple overwrite
     set "PROXY_PORTS=!NEW_PROXY_PORTS!"
+    call :sanitize_proxyports
     exit /b 0
 )
 
-:: Incremental/decremental adjustment mode
 set "ADJUST_INPUT=!NEW_PROXY_PORTS!"
 :adjust_loop
-if "!ADJUST_INPUT!"=="" exit /b 0
-for /f "tokens=1*" %%A in ("!ADJUST_INPUT!") do (
+if "!ADJUST_INPUT!"=="" (
+    call :sanitize_proxyports
+    exit /b 0
+)
+for /f "tokens=1* %%A in ("!ADJUST_INPUT!") do (
     set "TOKEN=%%A"
     set "ADJUST_INPUT=%%B"
 )
@@ -1495,11 +1537,27 @@ if "!TARGET_PORT:~0,1!"=="+" set "TARGET_PORT=!TARGET_PORT:~1!"
 if "!TARGET_PORT:~0,1!"=="-" set "TARGET_PORT=!TARGET_PORT:~1!"
 if "!TARGET_PORT:~0,1!"==":" set "TARGET_PORT=!TARGET_PORT:~1!"
 
+set "T_PORT="
+set "T_IP="
+for /f "tokens=1,2 delims=:" %%X in ("!TARGET_PORT!") do (
+    set "T_PORT=%%X"
+    set "T_IP=%%Y"
+)
+set "IS_NUM=1"
+if not "!T_PORT!"=="" for /f "delims=0123456789" %%A in ("!T_PORT!") do set "IS_NUM=0"
+if not "!IS_NUM!"=="1" (
+    set "TEMP_P=!T_PORT!"
+    set "T_PORT=!T_IP!"
+    set "T_IP=!TEMP_P!"
+)
+if "!T_IP!"=="" set "T_IP=127.0.0.1"
+
 if "!FIRST_CHAR!"=="-" (
-    :: Remove TARGET_PORT from PROXY_PORTS
+    :: Remove T_PORT from PROXY_PORTS
     set "NEW_LIST="
     for %%P in (!PROXY_PORTS!) do (
-        if not "%%P"=="!TARGET_PORT!" (
+        for /f "tokens=1 delims=:" %%X in ("%%P") do set "CURR_P=%%X"
+        if not "!CURR_P!"=="!T_PORT!" (
             if "!NEW_LIST!"=="" (
                 set "NEW_LIST=%%P"
             ) else (
@@ -1509,19 +1567,47 @@ if "!FIRST_CHAR!"=="-" (
     )
     set "PROXY_PORTS=!NEW_LIST!"
 ) else (
-    :: Add TARGET_PORT to PROXY_PORTS if not already present
-    set "ALREADY_HAS=0"
-    for %%P in (!PROXY_PORTS!) do (
-        if "%%P"=="!TARGET_PORT!" set ALREADY_HAS=1
-    )
-    if !ALREADY_HAS! equ 0 (
-        if "!PROXY_PORTS!"=="" (
-            set "PROXY_PORTS=!TARGET_PORT!"
+    :: Add or update T_PORT in PROXY_PORTS
+    if "!PROFILE!"=="nginx_gateway" (
+        if "!T_IP!"=="127.0.0.1" (
+            set /p INPUT_BIP=  Enter backend IP for port !T_PORT! [default: 127.0.0.1]: 
+            if not "!INPUT_BIP!"=="" set "T_IP=!INPUT_BIP!"
+        )
+        set "NEW_ITEM=!T_PORT!:!T_IP!"
+    ) else (
+        if not "!T_IP!"=="" if not "!T_IP!"=="127.0.0.1" (
+            set "NEW_ITEM=!T_PORT!:!T_IP!"
         ) else (
-            set "PROXY_PORTS=!PROXY_PORTS! !TARGET_PORT!"
+            set "NEW_ITEM=!T_PORT!"
         )
     )
+
+    set "ALREADY_HAS=0"
+    set "NEW_LIST="
+    for %%P in (!PROXY_PORTS!) do (
+        for /f "tokens=1 delims=:" %%X in ("%%P") do set "CURR_P=%%X"
+        if "!CURR_P!"=="!T_PORT!" (
+            if "!NEW_LIST!"=="" (
+                set "NEW_LIST=!NEW_ITEM!"
+            ) else (
+                set "NEW_LIST=!NEW_LIST! !NEW_ITEM!"
+            )
+            set "ALREADY_HAS=1"
+        ) else (
+            if "!NEW_LIST!"=="" (
+                set "NEW_LIST=%%P"
+            ) else (
+                set "NEW_LIST=!NEW_LIST! %%P"
+            )
+        )
+    )
+    if !ALREADY_HAS! equ 0 (
+        if "!NEW_LIST!"=="" (
+            set "NEW_LIST=!NEW_ITEM!"
+        ) else (
+            set "NEW_LIST=!NEW_LIST! !NEW_ITEM!"
+        )
+    )
+    set "PROXY_PORTS=!NEW_LIST!"
 )
 goto adjust_loop
-
-

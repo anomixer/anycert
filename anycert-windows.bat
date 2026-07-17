@@ -199,18 +199,39 @@ set SMB_CONNECTED=0
 if /i "!SERVER_OS!"=="y" goto probe_windows_ca
 
 :: Linux Server Branch
-scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:!CA_REMOTE!" "!CA_LOCAL!"
+set "SSH_RETRY_COUNT=0"
+:scp_retry_linux1
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:!CA_REMOTE!" "!CA_LOCAL!" 2>"!DATA_DIR!\scp_err.txt"
 if !errorlevel! equ 0 goto scp_ok
+call :check_ssh_host_change
+if !SSH_HOST_CHANGED! equ 1 if !SSH_RETRY_COUNT! lss 1 (
+    set /a SSH_RETRY_COUNT+=1
+    goto scp_retry_linux1
+)
 
 echo   [INFO] Linux default path download failed. Probing backup path [/root/anycert/anycert-ca.crt]...
-scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!"
+set "SSH_RETRY_COUNT=0"
+:scp_retry_linux2
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/root/anycert/anycert-ca.crt" "!CA_LOCAL!" 2>"!DATA_DIR!\scp_err.txt"
 if !errorlevel! equ 0 goto scp_ok
+call :check_ssh_host_change
+if !SSH_HOST_CHANGED! equ 1 if !SSH_RETRY_COUNT! lss 1 (
+    set /a SSH_RETRY_COUNT+=1
+    goto scp_retry_linux2
+)
 goto scp_failed
 
 :probe_windows_ca
 :: Windows Server Branch
-scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/C:/anycert/anycert-ca.crt" "!CA_LOCAL!"
+set "SSH_RETRY_COUNT=0"
+:scp_retry_win1
+scp -o StrictHostKeyChecking=no -o ConnectTimeout=2 "!SSH_USER!@!SERVER_IP!:/C:/anycert/anycert-ca.crt" "!CA_LOCAL!" 2>"!DATA_DIR!\scp_err.txt"
 if !errorlevel! equ 0 goto scp_ok
+call :check_ssh_host_change
+if !SSH_HOST_CHANGED! equ 1 if !SSH_RETRY_COUNT! lss 1 (
+    set /a SSH_RETRY_COUNT+=1
+    goto scp_retry_win1
+)
 
 echo   [INFO] SCP download failed. Probing Windows SMB share [C$]...
 set /p SERVER_PASS=  Enter password for !SSH_USER! to connect via SMB: 
@@ -224,6 +245,7 @@ echo   [OK] CA certificate successfully copied via SMB Share!
 goto scp_ok
 
 :scp_failed
+if exist "!DATA_DIR!\scp_err.txt" del "!DATA_DIR!\scp_err.txt"
 echo.
 echo   !RED![ERROR]!RESET! Certificate download failed! Please check:
 echo   !YELLOW!1. The server-side anycert.sh (Linux/WSL) or anycert.bat (Windows) has NOT been executed yet.!RESET!
@@ -236,6 +258,7 @@ pause
 exit /b 1
 
 :scp_ok
+if exist "!DATA_DIR!\scp_err.txt" del "!DATA_DIR!\scp_err.txt"
 echo.
 echo   [OK] Certificate downloaded successfully!
 echo.
@@ -710,3 +733,31 @@ copy /y "!TEMP_INFO!" "!INFO_FILE!" >nul
 del "!TEMP_INFO!"
 
 goto skip_ssh_steps
+
+:check_ssh_host_change
+set "SSH_HOST_CHANGED=0"
+if not exist "!DATA_DIR!\scp_err.txt" exit /b 0
+findstr /i /c:"REMOTE HOST IDENTIFICATION HAS CHANGED" "!DATA_DIR!\scp_err.txt" >nul
+set "H_CHANGED=!errorlevel!"
+findstr /i /c:"Host key verification failed" "!DATA_DIR!\scp_err.txt" >nul
+set "K_FAILED=!errorlevel!"
+if !H_CHANGED! equ 0 (
+    goto do_remove_host_key
+)
+if !K_FAILED! equ 0 (
+    findstr /i /c:"offending" "!DATA_DIR!\scp_err.txt" >nul
+    if !errorlevel! equ 0 goto do_remove_host_key
+)
+exit /b 0
+
+:do_remove_host_key
+echo.
+echo   !YELLOW![WARN] SSH host identification for !SERVER_IP! has changed or verification failed.!RESET!
+echo   This usually happens when the remote server is reinstalled or SSH keys are regenerated.
+set /p REMOVE_KEY=  Would you like to automatically clear the old host key from known_hosts? [y/N]: 
+if /i "!REMOVE_KEY!"=="y" (
+    ssh-keygen -R "!SERVER_IP!" >nul 2>&1
+    set "SSH_HOST_CHANGED=1"
+    echo   [OK] Cleared host key for !SERVER_IP!.
+)
+exit /b 0

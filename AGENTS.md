@@ -145,6 +145,15 @@
 
 ---
 
+### 階段 15：用戶端 SSH Host Key 變更自動偵測與 known_hosts 清理
+- **問題痛點**：當遠端伺服器被重新安裝、WSL 被重建、或者是 SSH 服務金鑰重新產生時，用戶端執行 `scp` 時會因為 `known_hosts` 記錄與遠端金鑰不符，拋出嚴重的 `REMOTE HOST IDENTIFICATION HAS CHANGED` 與 `Host key verification failed` 報錯，並直接拒絕連線。強迫使用者手動去尋找與編輯 known_hosts 檔案體驗極差。
+- **三端用戶端 (Windows/Linux/macOS) 自動化防禦與修復**：
+  - 在三端用戶端的 `scp` 憑證下載過程中，將錯誤日誌導向臨時檔案，並在執行失敗時主動檢查日誌內容。
+  - 一旦偵測到 Host Key 變更或驗證失敗，會在終端機以顯眼的黃色 `[WARN]` 給予說明，並主動詢問使用者：「是否自動清除 known_hosts 中該 IP 的舊記錄？[y/N]」。
+  - 使用者確認後，腳本會自動以 `ssh-keygen -R <SERVER_IP>` 來乾淨地移去舊的金鑰紀錄（Linux/macOS 會自動相容 `root` 與 `SUDO_USER` 的 known_hosts 目錄；Windows 則直接呼叫系統的 `ssh-keygen`），並在清理後自動重新嘗試連線，達成完全無痛的 SSH 連線重建體驗。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本
@@ -179,16 +188,16 @@
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | `anycert.???`        | .bat  | .sh   |  .sh  | .sh  | .sh |
-| -> server setup      |       |  ✅  |       |       | ✅ |
-| local browser access |       |       |       |      |  ⚠️ |
-| -> client setup?     |       |       |       |      |  ⚠️ |
+| -> server setup      | ✅    |  ✅  |       |  ✅  | ✅ |
+| local browser access | ✅    |       |       | ✅   |  ⚠️ |
+| -> need client setup?| ✅ no |       |       |  yes  |  ⚠️ |
 
 ### 2. 用戶端信任導入 (Client Setup)
 | 腳本名稱 \ 伺服器平台 | Windows | Linux | macOS | WSL | PVE |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| `anycert-linux.sh`    |   | ✅ |   |   | ✅ |
-| `anycert-macos.sh`    |   | ✅ |   |   | ✅ |
-| `anycert-windows.bat` |   | ✅ |   |   | ✅ |
+| `anycert-linux.sh`    |  ✅   | ✅    |      | ✅  | ✅ |
+| `anycert-macos.sh`    |  ✅   | ✅    |      |     | ✅ |
+| `anycert-windows.bat` |  ✅   | ✅    |      | ✅  | ✅ |
 
 ---
 
@@ -204,6 +213,9 @@
    - 任何用戶端導入、清理或備援機制的調整，必須同步更新至 `anycert-windows.bat`、`anycert-linux.sh` 與 `anycert-macos.sh` 三端。
 4. **離線韌性設計**：
    - 始終確保用戶端腳本在網路不通或服務被防火牆阻擋時，能夠優雅降級（Fallback）引導至手動離線模式，不得直接噴錯中斷。
+5. **在 Commit/Push 前進行 Bash 語法靜態檢測**：
+   - 任何對 `.sh` 腳本（`anycert.sh`、`anycert-linux.sh`、`anycert-macos.sh`）的變更，在 Commit/Push 之前，**必須**在終端機執行 `bash -n <script_name>` 進行語法靜態檢測，徹底避免遺漏 `done`、`fi` 等低級語法解析錯誤。
+   - 任何 `local` 變數宣告必須嚴格限定在 shell 函數（function）內部使用，嚴禁在頂層腳本 scope 中宣告，以免在執行時拋出語法異常。
 
 ---
 
