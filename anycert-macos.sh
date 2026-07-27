@@ -280,28 +280,70 @@ if [[ -f "$INFO_FILE" ]] && grep -q "^$SERVER_IP " "$INFO_FILE"; then
     [[ "$REIMPORT" =~ ^[Yy]$ ]] || { echo "  Cancelled."; exit 0; }
 fi
 
-read -rp "  SSH Username [default: root]: " SSH_USER
-SSH_USER=${SSH_USER:-root}
 
-read -rp "  Is the remote server running Windows Server? [Y/n]: " SERVER_OS
-SERVER_OS=${SERVER_OS:-y}
-
-echo
-echo "  [Tip] You will be prompted to enter the SSH password shortly."
-echo
 
 # ── Step 2 ───────────────────────────────────────────────
 echo "[Step 2/5] Download Server Root CA Certificate"
 echo "-----------------------------------------------------"
 
-CA_REMOTE="/etc/anycert/anycert-ca.crt"
 CA_LOCAL="$DATA_DIR/anycert-ca-${SERVER_IP}.crt"
 
-echo "  Source      : ${SSH_USER}@${SERVER_IP}:${CA_REMOTE}"
-echo "  Destination : $CA_LOCAL"
-echo
+# Priority 1: HTTP/HTTPS Curl Download (Zero-Password)
+HTTP_DOWNLOAD_OK=false
+echo "  Probing HTTP server (Port 80) for certificate download..."
+if curl -s -f -k -o "$CA_LOCAL" "http://${SERVER_IP}/anycert/anycert-ca.crt"; then
+    if curl -s -f -k -o "/tmp/anycert_conf_${SERVER_IP}.tmp" "http://${SERVER_IP}/anycert/anycert.conf"; then
+        echo -e "  ${GREEN}[OK]${RESET} CA certificate and config successfully downloaded via HTTP!"
+        HTTP_DOWNLOAD_OK=true
+    fi
+fi
 
-# Try probing download paths based on server OS
+if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
+    echo "  Port 80 download failed. Probing backup SSL ports via HTTPS..."
+    BACKUP_SSL_PORTS=(13000 18080 21434 16502 16501 8443 443)
+    for P in "${BACKUP_SSL_PORTS[@]}"; do
+        if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
+            if curl -s -f -k --connect-timeout 2 -o "$CA_LOCAL" "https://${SERVER_IP}:${P}/anycert/anycert-ca.crt" >/dev/null 2>&1; then
+                if curl -s -f -k --connect-timeout 2 -o "/tmp/anycert_conf_${SERVER_IP}.tmp" "https://${SERVER_IP}:${P}/anycert/anycert.conf" >/dev/null 2>&1; then
+                    echo -e "  ${GREEN}[OK]${RESET} CA certificate and config successfully downloaded via HTTPS (Port ${P})!"
+                    HTTP_DOWNLOAD_OK=true
+                fi
+            fi
+        fi
+    done
+fi
+
+if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
+    echo "  [INFO] Zero-password HTTP/HTTPS download failed. Falling back to SSH/SCP..."
+    echo
+
+    read -rp "  SSH Username [default: root]: " SSH_USER
+    SSH_USER=${SSH_USER:-root}
+
+    while true; do
+        read -rp "  What OS is remote server running? (L) for Linux/WSL/macOS, [W] for Windows Family [L/W]: " INPUT_OS
+        if [[ "$INPUT_OS" =~ ^[Ll]$ ]]; then
+            SERVER_OS="n"
+            break
+        elif [[ "$INPUT_OS" =~ ^[Ww]$ ]]; then
+            SERVER_OS="y"
+            break
+        fi
+    done
+
+    CA_REMOTE="/etc/anycert/anycert-ca.crt"
+    if [[ "$SERVER_OS" =~ ^[Yy]$ ]]; then
+        CA_REMOTE="/C:/anycert/anycert-ca.crt"
+    fi
+
+    echo
+    echo "  Source      : ${SSH_USER}@${SERVER_IP}:${CA_REMOTE}"
+    echo "  Destination : $CA_LOCAL"
+    echo
+    echo "  [Tip] You will be prompted to enter the SSH password shortly."
+    echo
+
+    # Try probing download paths based on server OS
 # scp is run as SUDO_USER (not root) so macOS Keychain / SSH agent is accessible.
 # Download to /tmp first (world-writable), then root copies to DATA_DIR.
 SCP_USER="${SUDO_USER:-$(whoami)}"
@@ -371,15 +413,27 @@ if [[ "$SERVER_OS" == "y" || "$SERVER_OS" == "Y" ]]; then
         mount_dir="/tmp/anycert_smb_mount"
         mkdir -p "$mount_dir"
         
-        if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
+        if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/tmp/smb_err.txt 2>&1; then
             if [[ -f "${mount_dir}/anycert/anycert-ca.crt" ]]; then
                 cp "${mount_dir}/anycert/anycert-ca.crt" "$TMP_CERT"
                 echo "  [OK] CA certificate successfully copied via SMB Share!"
                 SMB_CONNECTED=true
             fi
             umount "$mount_dir" >/dev/null 2>&1
+        else
+            echo -e "  ${YELLOW}[WARN] SMB connection failed:${RESET}"
+            cat /tmp/smb_err.txt
+            rm -f /tmp/smb_err.txt
+            echo ""
+            echo -e "  ${CYAN}[Tip]${RESET} If you got 'Permission denied' or similar error, this is due to Windows remote UAC."
+            echo -e "        To bypass this, either:"
+            echo -e "        1. Run this client script again using the built-in 'Administrator' account."
+            echo -e "        2. Or run this command as Administrator on the Windows server to bypass it (takes effect immediately):"
+            echo -e "           reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f"
+            echo ""
         fi
         rmdir "$mount_dir" >/dev/null 2>&1
+        rm -f /tmp/smb_err.txt >/dev/null 2>&1
     fi
     
     if [[ "$SMB_CONNECTED" != "true" && ! -s "$TMP_CERT" ]]; then
@@ -439,6 +493,7 @@ rm -f "$ERR_TMP"
 # Move from /tmp to final DATA_DIR destination
 cp "$TMP_CERT" "$CA_LOCAL"
 rm -f "$TMP_CERT"
+fi
 
 echo
 echo "  [OK] Certificate downloaded successfully!"
@@ -458,9 +513,19 @@ echo
 # Temporarily disable set -e to prevent command substitution crash during FQDN probing
 set +e
 
-# Probe FQDN based on server OS or SMB connection
+# Probe FQDN based on server OS, SMB connection or HTTP download
 SERVER_DNS=""
-if [[ "$SMB_CONNECTED" == "true" ]]; then
+if [[ "$HTTP_DOWNLOAD_OK" == "true" ]]; then
+    local_conf_tmp="/tmp/anycert_conf_${SERVER_IP}.tmp"
+    if [[ -f "$local_conf_tmp" ]]; then
+        echo "  [INFO] Parsing remote config file via HTTP..."
+        SERVER_DNS=$(grep "^SERVER_FQDN=" "$local_conf_tmp" | cut -d= -f2- | tr -d '\r\n"')
+        REMOTE_PROXY_PORTS=$(grep "^PROXY_PORTS=" "$local_conf_tmp" | cut -d= -f2- | tr -d '\r\n"')
+        REMOTE_PORT_OFFSET=$(grep "^PORT_OFFSET=" "$local_conf_tmp" | cut -d= -f2- | tr -d '\r\n"')
+        REMOTE_PROFILE=$(grep "^PROFILE=" "$local_conf_tmp" | cut -d= -f2- | tr -d '\r\n"')
+        rm -f "$local_conf_tmp"
+    fi
+elif [[ "$SMB_CONNECTED" == "true" ]]; then
     mount_dir="/tmp/anycert_smb_mount"
     mkdir -p "$mount_dir"
     if mount_smbfs "//${SSH_USER}:${SMB_PASS}@${SERVER_IP}/c$" "$mount_dir" >/dev/null 2>&1; then
@@ -590,12 +655,19 @@ if [[ "${REMOTE_PROFILE:-}" == "pve" ]]; then
     echo "    https://${SERVER_IP}:8006"
 elif [[ -n "${REMOTE_PROXY_PORTS:-}" ]]; then
     PORT_OFFSET_VAL="${REMOTE_PORT_OFFSET:-10000}"
-    for P in $REMOTE_PROXY_PORTS; do
+    for P_ENTRY in $REMOTE_PROXY_PORTS; do
+        if [[ "$P_ENTRY" == *":"* ]]; then
+            P="${P_ENTRY%%:*}"
+            BACKEND="${P_ENTRY#*:}"
+        else
+            P="$P_ENTRY"
+            BACKEND="localhost"
+        fi
         SSL_P=$((P + PORT_OFFSET_VAL))
         [[ $SSL_P -gt 65535 ]] && SSL_P=$((P - PORT_OFFSET_VAL))
         echo "    https://${SERVER_DNS}:${SSL_P}   (via FQDN)"
         echo "    https://${SERVER_IP}:${SSL_P}   (via IP, use this if app blocks hostname)"
-        echo "      ->  http://localhost:${P}"
+        echo "      ->  http://${BACKEND}:${P}"
         echo
     done
 else

@@ -154,6 +154,56 @@
 
 ---
 
+### 階段 16：修復 Nginx SSL Gateway (Profile 2) 複合埠解析與轉發提示 Bug
+- **問題痛點**：在 `Nginx SSL Gateway` 模式下，`PROXY_PORTS` 中儲存的格式為 `PORT:BACKEND_IP`（例如 `3000:172.16.21.52`），非單純數字。這會導致 Windows 用戶端腳本在執行 SSL Port 數學計算時，因為傳入帶有冒號與 IP 的字串，導致 `set /a` 發生語法解析錯誤並拋出 `Missing operator.` 崩潰；同時，三端用戶端在輸出 Available HTTPS connections 列表時，也會將目標 Backend 連線網址誤植為 `http://localhost:3000:172.16.21.52` 的畸形 URL。
+- **修正**：
+  - **三端智慧分隔符拆分**：在三端用戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`）的 HTTPS connections 列表輸出模組中，主動偵測 `PROXY_PORTS` 欄位中是否包含冒號 `:`。
+  - **精準提取與計算**：若含有冒號，則自動拆分出純 Port 數字與目標 Backend IP。Windows 用戶端利用拆解後的純 Port 進行 `set /a` 計算，徹底解決 `Missing operator.` 崩潰；三端列印轉發提示時，亦正確指向各自的 Backend 目標（如 `-> http://172.16.21.52:3000`）。
+
+---
+
+### 階段 17：實現 Nginx 497 埠級自動 HTTP ➔ HTTPS 重導向 (Redirect)
+- **問題痛點**：當服務以 SSL 監聽在特定 Port 時（例如 `https://anyc:9899`），若使用者在瀏覽器中誤打為純 HTTP（例如 `http://anyc:9899`），Nginx 會預設拒絕請求並拋出 `400 Bad Request (The plain HTTP request was sent to HTTPS port)` 錯誤，無法自動跳轉。
+- **修正**：
+  - **導入 497 錯誤捕獲重定向**：在伺服器端腳本 `anycert.sh` 與 `anycert.bat` 的 Nginx 配置產生區塊中，於 `server` 區段內新增 `error_page 497 https://$http_host$request_uri;` 指令。
+  - **精準保留 Port 與路徑**：藉由 `$http_host`（包含原始 Port 資訊）與 `$request_uri`（包含原始路徑與參數），實現在同一個 SSL Port 上無縫、全自動地將純 HTTP 請求跳轉至安全 HTTPS 協議，極致優化終端存取體驗。
+  - **Windows Excluded Port & PortProxy 故障診斷**：針對 Windows 下常因 Hyper-V / WSL2 動態保留埠範圍，或是歷史遺留的 PortProxy 轉發規則（由 `netsh interface portproxy` 註冊且重開機亦不消失）導致 `bind()` 噴錯 `10013` 造成 Nginx 測試失敗的痛點，在 `anycert.bat` 中加入精準診斷提示。指引使用者如何以 `netsh interface portproxy show all` 排查，並提供 `delete` 指令釋放該連接埠，或是引導使用者重跑並更換 `PORT_OFFSET` 避開衝突。
+
+---
+
+### 階段 18：優化 Windows 用戶端路徑顯示與 SMB 故障詳細報錯
+- **問題痛點**：
+  - 在 `anycert-windows.bat` 用戶端中，不論遠端伺服器為 Windows 還是 Linux，畫面印出的下載來源路徑（`Source`）均被固定顯示為 Linux 預設路徑 `/etc/anycert/anycert-ca.crt`，造成嚴重的視覺誤導。
+  - 當 SCP 下載失敗並自動降級嘗試 SMB 連線時，若連線失敗，腳本並未輸出 `net use` 軟體的具體錯誤（例如權限不足、密碼錯誤等），直接回報連線失敗，排障資訊不足。
+- **修正**：
+  - **強制遠端作業系統輸入驗證**：將三端用戶端原有的 `Is the remote server running Windows Server? [Y/n]` 提示重構為更嚴謹、清晰的問句：`What OS is remote server running? (L) for Linux/WSL/macOS, [W] for Windows Family [L/W]:`。引進輸入驗證迴圈，強制使用者必須輸入 `L`/`l` 或 `W`/`w`，直接按下 Enter 或輸入其他字元會持續循環詢問，大幅降低誤按或誤設的機率。
+  - **動態來源路徑展示**：在三端用戶端中，依據使用者的遠端作業系統選擇，動態設定 `CA_REMOTE` 變數（Windows 伺服器設為 `/C:/anycert/anycert-ca.crt`，Linux 伺服器設為 `/etc/anycert/anycert-ca.crt`），讓畫面上顯示的來源下載路徑百分之百正確。
+  - **三端 SMB 錯誤資訊實體輸出與排障指南**：
+    - 在三端用戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`） the SMB 複製失敗路徑中，不再吞掉錯誤輸出，而是實體將 `net use`、`smbclient` 或 `mount_smbfs` 的錯誤輸出印在畫面上。
+    - 同步於三端錯誤路徑中增加黃色 `[Tip]` 指引，明示 `Access is denied` / `NT_STATUS_ACCESS_DENIED` 錯誤乃是由於 Windows 遠端 UAC 限制引起，引導使用者使用內建 `Administrator` 連線，或是直接提供手動繞過指令（`reg add ...`），省去對伺服器腳本的依賴。
+  - **移去伺服器端 UAC 阻塞與自動修改（極簡安全重構）**：徹底清理了伺服器端 `anycert.bat` 中所有自動修改登錄檔、寫入備份與卸載時還原的 Legacy 邏輯，並移除全部的阻塞式 `set /p` 詢問。開頭僅保留一個非阻塞、無害的 `[UAC Guard Note]` 冷知識提醒，100% 避免打擾不需要 SMB 功能的 Linux/macOS 用戶，將主控權完全交還給使用者。
+  - **雙語 README 加入 UAC 重要說明**：於 `README.md` 及 `README_tw.md` 中，針對 Windows SMB 管道特別追加 UAC 管理員降權防禦說明，指導使用者使用 Built-in `Administrator` 或手動執行伺服器 UAC 機碼一鍵解除與還原，確保文檔與程式碼功能 100% 同步。
+
+
+### 階段 19：基於 Nginx + HTTP Curl 的無密碼、免 SSH/SMB 自動傳輸與 4 級容災降級設計
+- **問題痛點**：
+  - 原本的憑證傳輸管道極度仰賴 SSH（SCP）或 SMB 共享通道。對於絕大多數以 `Profile 1 (Nginx SSL Proxy)` 或 `Profile 2 (Nginx SSL Gateway)` 部署的用戶而言，雖然伺服器本來就已經跑著 Nginx 的 Web 服務，卻依然必須為用戶端開通 SSH 埠（22）、SMB 埠（445），且需要繁瑣地輸入 SSH 密碼、設定公私鑰、或是手動排除複雜的 Windows UAC 權限，體驗不夠平滑。
+- **修正與架構革新**：
+  * **Nginx 80 埠智慧衝突探測與唯讀端點暴露**：
+    - 在伺服器端腳本（`anycert.sh` 與 `anycert.bat`）中，引進了 **80 埠衝突智慧探測**。當偵測到本機的 80 埠已被其他服務佔用時，自動跳過 Nginx 80 埠的配置生成，徹底消除了 Port 衝突導致 Nginx 啟動失敗的致命隱患。
+    - 若 80 埠未被佔用，則正常生成 80 埠 HTTP server，並預設新增兩個唯讀 location 端點：`/anycert/anycert-ca.crt` 與 `/anycert/anycert.conf` 用於憑證傳輸。
+  * **SSL 埠雙軌下載備援機制**：
+    - 同步在伺服器端產生的**每一個 SSL (HTTPS) server 區塊**內，亦寫入這兩個 `/anycert/` 唯讀端點。這提供了多重保險的備援通道：即使 80 埠因衝突被跳過，用戶端依然能透過已開通的 HTTPS 埠（如 13000）安全、免密碼地完成憑證拉取。
+  * **用戶端四級傳輸降級鏈路與 SSL 埠拉取優化 (HTTP/HTTPS ➔ SCP ➔ SMB ➔ 手動)**：
+    - 三端用戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`）在啟動時，會第一優先發送 HTTP curl 請求（Port 80）下載憑證。
+    - **SSL 埠自動探測**：若 80 埠下載失敗（如 80 埠被佔用或未開），用戶端會自動嘗試向一系列熱門的 SSL 備援埠（如 `13000`, `18080`, `21434`, `16502` 等）發送 `curl -k` (HTTPS) 探測拉取，大幅提升免密碼下載的成功機率。
+    - **零密碼、秒級下載**：若 HTTP/HTTPS 端點下載成功，腳本會直接跳過後續所有 SSH/SCP 密碼輸入與 SMB 權限驗證流程，一秒內自動完成本機 CA 信任導入與 hosts 解析。
+    - **強健的 Fallback 鏈路**：若 HTTP/HTTPS curl 皆失敗，用戶端會完全透明、無縫地向後降級至 SCP (SSH) -> SMB (Windows) -> 手動複製模式，確保在任何環境下皆能 100% 成功部署。
+  * **文檔同步與 Profile 3/4 擴充引導**：
+    - 更新 `README.md` 與 `README_tw.md` 將 HTTP/HTTPS Curl 註冊為第一優先 (Priority 1) 管道，並提供 Nginx location snippet 說明，引導 Profile 3 和 4 的自訂 Web 伺服器使用者手動加上此 location 以享受無密碼下載的超凡體驗。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本

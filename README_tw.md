@@ -333,11 +333,20 @@ sudo bash anycert-macos.sh
 這些腳本會：
 1. 提示輸入伺服器 IP 與 SSH 使用者名稱。
 2. **智慧傳輸與下載 Root CA**：
-   - **SCP 下載**：優先使用 scp 進行安全複製。
-   - **SMB 備用通道 (特別針對 Windows 伺服器)**：若遠端伺服器為 Windows 且未開通 SSH 服務（導致 SCP 失敗），用戶端腳本會自動改走 **Windows SMB (Port 445) 管道**。
+   - **HTTP/HTTPS Curl 下載 (優先，免密碼/免 SSH)**：若伺服器端使用的是 Nginx 一鍵代理或閘道器模式（Profile 1 或 2），伺服器會自動透過 80 埠安全、唯讀地公開 Root CA 與設定檔。若伺服器端的 80 埠已被其他服務佔用，anycert 會**自動跳過 80 埠監聽**以防衝突。同時，anycert 亦將下載端點註冊在**每一個開通的 SSL (HTTPS) 埠**上，用戶端若 80 埠下載失敗，會自動嘗試透過常見的 SSL 埠（如 `13000`, `18080`, `21434` 等）進行 **HTTPS 免密碼拉取**，安全且 100% 避免衝突。*(注意：Profile 3/4 的使用者亦可手動在自己原本的 Nginx 設定中加入 location `/anycert/` 享受此便利。)*
+   - **SCP 下載 (備用，需 SSH)**：若 HTTP Curl 下載失敗，用戶端會自動降級嘗試使用 SCP 進行安全複製。
+   - **SMB 備用通道 (備用，特別針對 Windows 伺服器)**：若 SCP 與 HTTP 皆失敗（如伺服器端為 Windows 且未開啟 SSH 服務），用戶端腳本會自動改走 **Windows SMB (Port 445) 管道**。
      - *Linux 用戶端*：自動檢查並引導安裝 `smbclient`，直接拉取憑證。
      - *macOS 用戶端*：使用內建 `mount_smbfs` 機制無痕掛載 `c$` 共用區拉取。
      - *智慧 FQDN 讀取*：若使用 SMB 連線成功，將直接解析 remote 的 `anycert.conf` 取得 FQDN，完全免除 SSH 連線或密碼手動重複輸入。
+     > [!IMPORTANT]
+     > **Windows SMB UAC 遠端限制 (存取被拒 / Access is denied)**
+     > Windows 預設會阻擋非內建的 Administrator 帳號（例如自建的管理員帳號）遠端存取 `C$` 等系統管理共享。
+     > 若您在 SMB 備用通道連線時遇到「System error 5」或「Access is denied / 存取被拒」錯誤：
+     > 1. 請重新執行用戶端腳本，並使用內建的 **`Administrator`** 帳號（大寫 A）與密碼進行連線。
+     > 2. 或直接在 Windows 伺服器端以系統管理員身分執行下述指令啟用修復（立即生效，無需重啟）：
+     >    `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f`
+     > 3. **如何還原**：若需復原此安全設定，可手動在伺服器端以系統管理員執行下述指令立即關閉繞過：`reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /f`
    - **離線手動複製模式 (Offline / Manual Mode)**：若 Windows Server 既無 SSH 也無 SMB，您可選擇 `Option 2`（Manual Mode），手動以隨身碟、RDP 或其他方式拷貝 CA 憑證至本機，腳本仍會為您自動執行後續所有的信任區與 hosts 安裝設定！
 3. **FQDN 自動對應**：自動將 FQDN 寫入用戶端的 `hosts` 檔案中。
 4. **系統與瀏覽器信任**：將 CA 憑證匯入系統信任區（Linux 版會同時自動匯入 Chrome 與 Firefox 的 NSS 憑證資料庫，macOS 版匯入 Keychain）。

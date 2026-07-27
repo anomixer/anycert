@@ -172,26 +172,73 @@ if exist "!INFO_FILE!" (
     )
 )
 
-set /p SSH_USER=  SSH Username [default: root]: 
-if "!SSH_USER!"=="" set SSH_USER=root
-
-set /p SERVER_OS=  Is the remote server running Windows Server? [Y/n]: 
-if "!SERVER_OS!"=="" set SERVER_OS=y
-
-echo.
-echo   [Tip] You will be prompted to enter the SSH password shortly.
-echo.
 
 :: ── Step 2 ───────────────────────────────────────────────────
 echo [Step 2/5] Download Server Root CA Certificate
 echo -----------------------------------------------------
 
-set CA_REMOTE=/etc/anycert/anycert-ca.crt
 set CA_LOCAL=!DATA_DIR!\anycert-ca-!SERVER_IP!.crt
 
+:: Priority 1: HTTP/HTTPS Curl Download (Zero-Password)
+set "HTTP_DOWNLOAD_OK=0"
+echo   Probing HTTP server (Port 80) for certificate download...
+curl.exe -s -f -k -o "!CA_LOCAL!" "http://!SERVER_IP!/anycert/anycert-ca.crt"
+if !errorlevel! equ 0 (
+    curl.exe -s -f -k -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "http://!SERVER_IP!/anycert/anycert.conf"
+    if not errorlevel 1 (
+        echo   !GREEN![OK]!RESET! CA certificate and config successfully downloaded via HTTP!
+        set "HTTP_DOWNLOAD_OK=1"
+        goto scp_ok
+    )
+)
+
+:: Try backup SSL ports via HTTPS (curl -k)
+echo   Port 80 download failed. Probing backup SSL ports via HTTPS...
+set "BACKUP_SSL_PORTS=13000 18080 21434 16502 16501 8443 443"
+for %%P in (!BACKUP_SSL_PORTS!) do (
+    if "!HTTP_DOWNLOAD_OK!"=="0" (
+        curl.exe -s -f -k --connect-timeout 2 -o "!CA_LOCAL!" "https://!SERVER_IP!:%%P/anycert/anycert-ca.crt" >nul 2>&1
+        if !errorlevel! equ 0 (
+            curl.exe -s -f -k --connect-timeout 2 -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "https://!SERVER_IP!:%%P/anycert/anycert.conf" >nul 2>&1
+            if not errorlevel 1 (
+                echo   !GREEN![OK]!RESET! CA certificate and config successfully downloaded via HTTPS (Port %%P)!
+                set "HTTP_DOWNLOAD_OK=1"
+            )
+        )
+    )
+)
+
+if "!HTTP_DOWNLOAD_OK!"=="1" goto scp_ok
+
+echo   [INFO] Zero-password HTTP/HTTPS download failed. Falling back to SSH/SCP...
+echo.
+
+:: Prompt for SSH/OS connection details dynamically
+set /p SSH_USER=  SSH Username [default: root]: 
+if "!SSH_USER!"=="" set SSH_USER=root
+
+:ask_os_loop
+set "INPUT_OS="
+set /p INPUT_OS=  What OS is remote server running? (L) for Linux/WSL/macOS, [W] for Windows Family [L/W]: 
+if /i "!INPUT_OS!"=="l" (
+    set SERVER_OS=n
+) else if /i "!INPUT_OS!"=="w" (
+    set SERVER_OS=y
+) else (
+    goto ask_os_loop
+)
+
+set CA_REMOTE=/etc/anycert/anycert-ca.crt
+if /i "!SERVER_OS!"=="y" set CA_REMOTE=/C:/anycert/anycert-ca.crt
+
+echo.
 echo   Source      : !SSH_USER!@!SERVER_IP!:!CA_REMOTE!
 echo   Destination : !CA_LOCAL!
 echo.
+echo   [Tip] You will be prompted to enter the SSH password shortly.
+echo.
+
+
 
 :: Path probing by OS selection
 set SMB_CONNECTED=0
@@ -235,14 +282,28 @@ if !SSH_HOST_CHANGED! equ 1 if !SSH_RETRY_COUNT! lss 1 (
 
 echo   [INFO] SCP download failed. Probing Windows SMB share [C$]...
 set /p SERVER_PASS=  Enter password for !SSH_USER! to connect via SMB: 
-net use \\!SERVER_IP!\c$ "!SERVER_PASS!" /user:"!SSH_USER!" >nul 2>&1
-if !errorlevel! neq 0 goto scp_failed
+net use \\!SERVER_IP!\c$ "!SERVER_PASS!" /user:"!SSH_USER!" > "!DATA_DIR!\net_use_err.txt" 2>&1
+if not !errorlevel! equ 0 goto smb_conn_fail
+del "!DATA_DIR!\net_use_err.txt" >nul 2>&1
 
 copy /y "\\!SERVER_IP!\c$\anycert\anycert-ca.crt" "!CA_LOCAL!" >nul 2>&1
 if not exist "!CA_LOCAL!" goto scp_failed
 set SMB_CONNECTED=1
 echo   [OK] CA certificate successfully copied via SMB Share!
 goto scp_ok
+
+:smb_conn_fail
+echo   !YELLOW![WARN] SMB connection failed.!RESET!
+type "!DATA_DIR!\net_use_err.txt"
+del "!DATA_DIR!\net_use_err.txt" >nul 2>&1
+echo.
+echo   !CYAN![Tip]!RESET! If you got "System error 5" (Access is denied), this is due to Windows remote UAC.
+echo          To bypass this, either:
+echo          1. Run this client script again using the built-in 'Administrator' account.
+echo          2. Or run this command as Administrator on the Windows server to bypass it (takes effect immediately):
+echo             reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
+echo.
+goto scp_failed
 
 :scp_failed
 if exist "!DATA_DIR!\scp_err.txt" del "!DATA_DIR!\scp_err.txt"
@@ -284,6 +345,21 @@ set SERVER_DNS=
 set REMOTE_PROXY_PORTS=
 set REMOTE_PORT_OFFSET=
 set REMOTE_PROFILE=
+
+:: If downloaded via HTTP, parse local temp config directly
+if "!HTTP_DOWNLOAD_OK!"=="1" (
+    set "CONF_TMP=!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp"
+    if exist "!CONF_TMP!" (
+        echo   [INFO] Parsing remote config file via HTTP...
+        for /f "usebackq tokens=1,2 delims==" %%A in ("!CONF_TMP!") do (
+            if "%%A"=="SERVER_FQDN" set "SERVER_DNS=%%B"
+            if "%%A"=="PROXY_PORTS" set "REMOTE_PROXY_PORTS=%%B"
+            if "%%A"=="PORT_OFFSET" set "REMOTE_PORT_OFFSET=%%B"
+            if "%%A"=="PROFILE" set "REMOTE_PROFILE=%%B"
+        )
+        del "!CONF_TMP!" >nul 2>&1
+    )
+)
 
 :: If connected via SMB, parse remote anycert.conf directly
 if "!SMB_CONNECTED!"=="1" (
@@ -470,11 +546,19 @@ for /f "tokens=1*" %%A in ("!SHOW_PORTS!") do (
     set "SHOW_P=%%A"
     set "SHOW_PORTS=%%B"
 )
-set /a SHOW_SSL=!SHOW_P!+!REMOTE_PORT_OFFSET!
-if !SHOW_SSL! gtr 65535 set /a SHOW_SSL=!SHOW_P!-!REMOTE_PORT_OFFSET!
+set "CUR_PORT=!SHOW_P!"
+set "CUR_BACKEND=localhost"
+if not "!SHOW_P!"=="!SHOW_P::=!" (
+    for /f "tokens=1,2 delims=:" %%X in ("!SHOW_P!") do (
+        set "CUR_PORT=%%X"
+        set "CUR_BACKEND=%%Y"
+    )
+)
+set /a SHOW_SSL=!CUR_PORT!+!REMOTE_PORT_OFFSET!
+if !SHOW_SSL! gtr 65535 set /a SHOW_SSL=!CUR_PORT!-!REMOTE_PORT_OFFSET!
 echo     https://!SERVER_DNS!:!SHOW_SSL!   (via FQDN)
 echo     https://!SERVER_IP!:!SHOW_SSL!   (via IP, use this if app blocks hostname)
-echo       -^>  http://localhost:!SHOW_P!
+echo       -^>  http://!CUR_BACKEND!:!CUR_PORT!
 echo.
 goto show_ports_loop
 :show_ports_done

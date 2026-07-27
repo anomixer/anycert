@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnyCert – HTTPS Gateway</title>
+<meta name="description" content="AnyCert one-click HTTPS reverse proxy and self-signed CA management server landing page.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface2: #1c2128; --border: #30363d;
+    --cyan: #39d0d8; --cyan-dim: #1a5f63; --cyan-glow: rgba(57,208,216,0.15);
+    --green: #3fb950; --yellow: #e3b341;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-muted: #484f58;
+    --link: #58a6ff;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(57,208,216,0.07), transparent);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 56px 24px 80px;
+    gap: 44px;
+  }
+
+  /* ── Banner SVG ── */
+  .banner {
+    width: min(640px, 92vw);
+    height: auto;
+    user-select: none;
+    animation: banner-glow 4s ease-in-out infinite alternate;
+    filter: drop-shadow(0 0 8px rgba(57,208,216,0.2));
+  }
+  @keyframes banner-glow {
+    from { filter: drop-shadow(0 0 6px rgba(57,208,216,0.2)); }
+    to   { filter: drop-shadow(0 0 22px rgba(57,208,216,0.6)) drop-shadow(0 0 50px rgba(57,208,216,0.2)); }
+  }
+
+  /* ── Tagline ── */
+  .tagline { font-size: 1rem; color: var(--text-dim); letter-spacing: 0.04em; text-align: center; }
+  .tagline strong { color: var(--text); font-weight: 500; }
+
+  /* ── Cards ── */
+  .cards { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; width: 100%; max-width: 900px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 26px 28px; flex: 1; min-width: 290px;
+    transition: border-color .3s, box-shadow .3s, transform .2s;
+  }
+  .card:hover {
+    border-color: var(--cyan-dim);
+    box-shadow: 0 0 28px rgba(57,208,216,0.08), 0 4px 20px rgba(0,0,0,0.3);
+    transform: translateY(-1px);
+  }
+  .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .card-icon { font-size: 1rem; }
+  .card h3 { font-size: .7rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); }
+
+  /* ── Info Rows ── */
+  .info-row { display: flex; gap: 12px; align-items: baseline; margin-bottom: 10px; font-size: .88rem; }
+  .info-row .label { color: var(--text-dim); min-width: 70px; flex-shrink: 0; font-size: .8rem; }
+  .info-row .val { font-family: 'JetBrains Mono', monospace; color: var(--text); word-break: break-all; }
+  .badge {
+    display: inline-block; padding: 1px 7px; border-radius: 3px;
+    font-size: .65rem; font-family: 'JetBrains Mono', monospace;
+    background: rgba(63,185,80,0.12); color: var(--green);
+    border: 1px solid rgba(63,185,80,0.25); margin-left: 6px; vertical-align: middle;
+  }
+  .ca-link { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); font-size: .8rem; color: var(--text-dim); }
+  .ca-link a { color: var(--link); text-decoration: none; font-family: 'JetBrains Mono', monospace; }
+  .ca-link a:hover { text-decoration: underline; }
+
+  /* ── Ports Table ── */
+  .ports-wrap { overflow-x: auto; }
+  .ports-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  .ports-table th {
+    color: var(--text-dim); text-align: left; padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+  }
+  .ports-table td { padding: 8px 10px; border-bottom: 1px solid #1e242c; font-family: 'JetBrains Mono', monospace; font-size: .76rem; }
+  .ports-table tr:last-child td { border-bottom: none; }
+  .ports-table a { color: var(--link); text-decoration: none; }
+  .ports-table a:hover { text-decoration: underline; color: var(--cyan); }
+  .arrow { color: var(--text-muted); }
+  .loading { color: var(--text-dim); font-size: .85rem; padding: 8px 0; }
+  .no-ports { color: var(--text-dim); font-size: .85rem; }
+
+  /* ── Notice ── */
+  .notice {
+    background: rgba(227,179,65,0.07); border: 1px solid rgba(227,179,65,0.25);
+    border-radius: 12px; padding: 20px 24px; max-width: 900px; width: 100%;
+    font-size: .875rem; line-height: 1.65; color: var(--text);
+  }
+  .notice-title { color: var(--yellow); font-weight: 600; margin-bottom: 8px; font-size: .9rem; }
+  .client-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: 8px; font-size: .84rem; font-weight: 500;
+    text-decoration: none; transition: all .2s; border: 1px solid transparent; cursor: pointer;
+  }
+  .btn-primary { background: var(--cyan-dim); color: #e0fafb; }
+  .btn-primary:hover { background: var(--cyan); color: var(--bg); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(57,208,216,0.3); }
+  .btn-outline { background: transparent; border-color: var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-glow); }
+
+  /* ── GitHub ── */
+  .github-section { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .github-link {
+    display: inline-flex; align-items: center; gap: 11px;
+    padding: 13px 30px; border-radius: 11px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); text-decoration: none;
+    font-size: .9rem; font-weight: 500; transition: all .25s;
+  }
+  .github-link:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(57,208,216,0.04); transform: translateY(-1px); box-shadow: 0 4px 18px rgba(57,208,216,0.1); }
+  .github-link svg { width: 21px; height: 21px; fill: currentColor; flex-shrink: 0; }
+  .github-repo { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Footer ── */
+  footer { font-size: .73rem; color: var(--text-muted); text-align: center; line-height: 1.8; }
+  footer a { color: var(--text-dim); text-decoration: none; }
+  footer a:hover { color: var(--cyan); }
+
+  .divider { width: 100%; max-width: 900px; border: none; border-top: 1px solid var(--border); margin: 0; }
+</style>
+</head>
+<body>
+
+<svg class="banner" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 140" role="img" aria-label="AnyCert">
+  <text font-family="Consolas, Monaco, 'Courier New', monospace" font-size="11.5" font-weight="bold" text-anchor="middle" xml:space="preserve">
+    <tspan x="310" y="25" fill="#fbbf24"> █████╗ ███╗   ██╗██╗   ██╗ ██████╗███████╗██████╗ ████████╗</tspan>
+    <tspan x="310" y="40" fill="#fbbf24">██╔══██╗████╗  ██║╚██╗ ██╔╝██╔════╝██╔════╝██╔══██╗╚══██╔══╝</tspan>
+    <tspan x="310" y="55" fill="#06b6d4">███████║██╔██╗ ██║ ╚████╔╝ ██║     █████╗  ██████╔╝   ██║   </tspan>
+    <tspan x="310" y="70" fill="#06b6d4">██╔══██║██║╚██╗██║  ╚██╔╝  ██║     ██╔══╝  ██╔══██╗   ██║   </tspan>
+    <tspan x="310" y="85" fill="#3b82f6">██║  ██║██║ ╚████║   ██║   ╚██████╗███████╗██║  ██║   ██║   </tspan>
+    <tspan x="310" y="100" fill="#3b82f6">╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝╚══════╝╚═╝  ╚═╝   ╚═╝   </tspan>
+    <tspan x="310" y="120" fill="#06b6d4">anycert (Universal HTTPS Manager)</tspan>
+  </text>
+</svg>
+
+<p class="tagline"><strong>AnyCert</strong> &mdash; One-Click HTTPS Reverse Proxy &amp; Self-Signed CA Management</p>
+
+<div class="cards">
+
+  <!-- Server Info Card -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-icon">&#9881;</span>
+      <h3>Server Info</h3>
+    </div>
+    <div class="info-row"><span class="label">Host</span><span class="val" id="val-fqdn">&#8212;</span></div>
+    <div class="info-row"><span class="label">IP</span><span class="val" id="val-ip">&#8212;</span></div>
+    <div class="info-row"><span class="label">Profile</span><span class="val" id="val-profile">&#8212;<span class="badge">active</span></span></div>
+    <div class="ca-link">
+      Root CA: <a href="/anycert/anycert-ca.crt" title="Download Root CA Certificate">/anycert/anycert-ca.crt</a>
+    </div>
+  </div>
+
+  <!-- Ports Card -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-icon">&#128274;</span>
+      <h3>HTTPS Proxy Ports</h3>
+    </div>
+    <div class="ports-wrap">
+      <div class="loading" id="ports-loading">Loading proxy configuration&#8230;</div>
+      <table class="ports-table" id="ports-table" style="display:none">
+        <thead>
+          <tr>
+            <th>HTTPS (via FQDN)</th>
+            <th>HTTPS (via IP)</th>
+            <th>Backend</th>
+          </tr>
+        </thead>
+        <tbody id="ports-tbody"></tbody>
+      </table>
+      <p class="no-ports" id="ports-empty" style="display:none">No proxy ports configured.</p>
+    </div>
+  </div>
+
+</div>
+
+<hr class="divider">
+
+<!-- Security Notice -->
+<div class="notice">
+  <div class="notice-title">&#9888; Seeing a security warning in your browser?</div>
+  Your browser doesn't trust this server's self-signed certificate yet.
+  Run the AnyCert client script on your machine to automatically install the Root CA and permanently eliminate all HTTPS browser warnings:
+  <div class="client-links">
+    <a class="btn btn-primary" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-windows.bat">
+      &#11015; Windows (.bat)
+    </a>
+    <a class="btn btn-outline" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-linux.sh">
+      &#11015; Linux (.sh)
+    </a>
+    <a class="btn btn-outline" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-macos.sh">
+      &#11015; macOS (.sh)
+    </a>
+  </div>
+</div>
+
+<!-- GitHub -->
+<div class="github-section">
+  <a class="github-link" href="https://github.com/anomixer/anycert" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="GitHub">
+      <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+    </svg>
+    <span class="github-repo">anomixer / anycert</span>
+  </a>
+  <footer>
+    AnyCert &mdash; MIT License &nbsp;&bull;&nbsp;
+    <a href="https://github.com/anomixer/anycert/blob/main/README.md" target="_blank" rel="noopener">Documentation</a>
+    &nbsp;&bull;&nbsp; Built with &#9825; for seamless local HTTPS
+  </footer>
+</div>
+
+<script>
+(async () => {
+  const PROFILE_NAMES = {
+    proxy:   'Nginx SSL Proxy (Profile 1)',
+    gateway: 'Nginx SSL Gateway (Profile 2)',
+    custom:  'Custom Path (Profile 3)',
+    none:    'Generate Only (Profile 4)',
+    pve:     'Proxmox VE (Profile 5)',
+  };
+
+  function parseConf(text) {
+    const conf = {};
+    for (const line of text.split('\n')) {
+      const m = line.match(/^([A-Z_]+)=(.*)$/);
+      if (m) {
+        // Strip surrounding quotes (single or double) written by anycert scripts
+        let val = m[2].trim();
+        if ((val.startsWith('"') && val.endsWith('"')) ||
+            (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        conf[m[1].trim()] = val;
+      }
+    }
+    return conf;
+  }
+
+  function resolveSSLPort(httpPort, offset) {
+    return parseInt(httpPort) + (parseInt(offset) || 10000);
+  }
+
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  try {
+    const res = await fetch('/anycert/anycert.conf', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('conf not found');
+    const conf = parseConf(await res.text());
+
+    const fqdn   = conf.SERVER_FQDN  || location.hostname;
+    const ip     = conf.SERVER_IP    || location.hostname;
+    const profile = conf.PROFILE     || '';
+    const ports  = (conf.PROXY_PORTS || '').trim();
+    const offset = conf.PORT_OFFSET  || '10000';
+
+    setText('val-fqdn', fqdn);
+    setText('val-ip', ip);
+
+    const profileEl = document.getElementById('val-profile');
+    if (profileEl) {
+      profileEl.innerHTML = (PROFILE_NAMES[profile] || profile || 'AnyCert Server') +
+        ' <span class="badge">active</span>';
+    }
+
+    // Build ports table
+    document.getElementById('ports-loading').style.display = 'none';
+    const portList = ports ? ports.split(/\s+/).filter(Boolean) : [];
+
+    if (portList.length === 0) {
+      document.getElementById('ports-empty').style.display = '';
+    } else {
+      const tbody = document.getElementById('ports-tbody');
+      for (const entry of portList) {
+        const [rawPort, bip = '127.0.0.1'] = entry.split(':');
+        const sslPort = resolveSSLPort(rawPort, offset);
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td><a href="https://${fqdn}:${sslPort}" target="_blank">https://${fqdn}:${sslPort}</a></td>` +
+          `<td><a href="https://${ip}:${sslPort}"   target="_blank">https://${ip}:${sslPort}</a></td>` +
+          `<td><span class="arrow">&#8594;</span> http://${bip}:${rawPort}</td>`;
+        tbody.appendChild(tr);
+      }
+      document.getElementById('ports-table').style.display = 'table';
+    }
+
+  } catch (_) {
+    document.getElementById('ports-loading').textContent = 'Unable to load proxy configuration.';
+    setText('val-fqdn', location.hostname);
+    document.getElementById('val-profile').innerHTML = 'AnyCert Server <span class="badge">active</span>';
+  }
+})();
+</script>
+</body>
+</html>

@@ -62,6 +62,21 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+:: ── Check SMB Remote UAC Policy (LocalAccountTokenFilterPolicy) ──
+set "POLICY_VAL=none"
+for /f "tokens=3" %%A in ('reg query HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy 2^>nul') do (
+    set "POLICY_VAL=%%A"
+)
+if "!POLICY_VAL!"=="0x1" set "POLICY_VAL=1"
+if "!POLICY_VAL!"=="0x0" set "POLICY_VAL=0"
+if not "!POLICY_VAL!"=="1" (
+    echo   !CYAN![UAC Guard Note]!RESET! Remote non-built-in Administrator accounts are blocked
+    echo                  from SMB C$ shares by default. If your clients will download certs
+    echo                  via SMB using custom admin accounts, you can run this command to bypass:
+    echo                  reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
+    echo.
+)
+
 :: ── Find OpenSSL (now moved to the top) ─────────────────────────
 set OPENSSL_BIN=
 where openssl >nul 2>&1
@@ -912,6 +927,11 @@ for %%E in (!EXTRA_IPS!) do (
 )
 set NGINX_SERVER_NAMES=!NGINX_SERVER_NAMES! localhost 127.0.0.1
 
+:: Detect if Port 80 is occupied on the Windows server
+set "PORT_80_OCCUPIED=0"
+netstat -ano | findstr /i "listening" | findstr /c:":80 " /c:"]:80 " >nul 2>&1
+if !errorlevel! equ 0 set "PORT_80_OCCUPIED=1"
+
 (
 echo worker_processes  1;
 echo.
@@ -925,16 +945,45 @@ echo     default_type  application/octet-stream;
 echo     sendfile        on;
 echo     keepalive_timeout  65;
 echo.
-echo     # Standard HTTP Server
-echo     server {
-echo         listen       80;
-echo         server_name  !NGINX_SERVER_NAMES!;
-echo         location / {
-echo             root   html;
-echo             index  index.html index.htm;
-echo         }
-echo     }
 ) > "!NGINX_CONF!"
+
+:: Deploy AnyCert landing page (JS fetches /anycert/anycert.conf at runtime for dynamic content)
+set "HTML_DEST=!NGINX_DIR!\html\index.html"
+set "HTML_SRC=%~dp0public\index.html"
+if exist "!HTML_SRC!" (
+    copy /y "!HTML_SRC!" "!HTML_DEST!" >nul 2>&1
+    echo   !GREEN![OK]!RESET! AnyCert landing page deployed: !HTML_DEST!
+) else (
+    echo   [WARN] public\index.html not found next to anycert.bat ^- skipping landing page.
+)
+
+if "!PORT_80_OCCUPIED!"=="0" (
+    (
+    echo     # Standard HTTP Server
+    echo     server {
+    echo         listen       80;
+    echo         server_name  !NGINX_SERVER_NAMES!;
+    echo.
+    echo         # Direct HTTP download for client script zero-password access
+    echo         location /anycert/anycert-ca.crt {
+    echo             alias C:/anycert/anycert-ca.crt;
+    echo             default_type application/x-x509-ca-cert;
+    echo         }
+    echo.
+    echo         location /anycert/anycert.conf {
+    echo             alias C:/anycert/anycert.conf;
+    echo             default_type text/plain;
+    echo         }
+    echo.
+    echo         location / {
+    echo             root   C:/nginx/html;
+    echo             index  index.html index.htm;
+    echo         }
+    echo     }
+    ) >> "!NGINX_CONF!"
+) else (
+    echo   [INFO] Port 80 is occupied by another service. Skipping Nginx 80 HTTP server block to avoid collision.
+)
 
 :: Loop over ports and write server blocks using label loop to avoid CMD parser bugs
 set "TEMP_PORTS=!PROXY_PORTS!"
@@ -961,6 +1010,20 @@ echo.
 echo         ssl_certificate      C:/anycert/anycert-server.crt;
 echo         ssl_certificate_key  C:/anycert/anycert-server.key;
 echo.
+echo         # Redirect HTTP requests to HTTPS on the same SSL port
+echo         error_page 497 https://$http_host$request_uri;
+echo.
+echo         # Direct HTTP download for client script zero-password access
+echo         location /anycert/anycert-ca.crt {
+echo             alias C:/anycert/anycert-ca.crt;
+echo             default_type application/x-x509-ca-cert;
+echo         }
+echo.
+echo         location /anycert/anycert.conf {
+echo             alias C:/anycert/anycert.conf;
+echo             default_type text/plain;
+echo         }
+echo.
 echo         location / {
 echo             proxy_pass http://!BIP!:!RAW_PORT!;
 echo             proxy_set_header Host $http_host;
@@ -985,12 +1048,34 @@ echo   !GREEN![OK]!RESET! Nginx configuration written successfully: !NGINX_CONF!
 echo   Testing Nginx configuration...
 cd /d "!NGINX_DIR!"
 .\nginx.exe -t >nul 2>&1
-if errorlevel 1 (
-    echo   !RED![ERROR]!RESET! Nginx configuration test failed! Please check:
-    .\nginx.exe -t
-    pause
-    exit /b 1
-)
+if not errorlevel 1 goto nginx_test_ok
+
+echo.
+echo   !RED![ERROR]!RESET! Nginx configuration test failed!
+echo   -----------------------------------------------------
+echo   This usually happens for one of the following reasons:
+echo     1. One of the SSL ports is already occupied by another running application.
+echo     2. !YELLOW!Windows (Hyper-V / WSL2) has dynamically reserved this port range.!RESET!
+echo     3. !YELLOW!Windows PortProxy (netsh interface portproxy) is forwarding this port.!RESET!
+echo        (Error 10013: An attempt was made to access a socket in a way forbidden...)
+echo.
+echo   [How to diagnose & fix]:
+echo     * Check PortProxy rules:  netsh interface portproxy show all
+echo       If you find the blocked port, delete it using:
+echo       netsh interface portproxy delete v4tov4 listenport=<port>
+echo.
+echo     * Check dynamic exclusions: netsh interface ipv4 show excludedportrange protocol=tcp
+echo.
+echo     * Quick Bypass: Re-run anycert.bat, and when prompted for:
+echo       "Enter HTTPS port offset [default: 10000]"
+echo       Choose a different offset (e.g. 20000, 30000) to bypass the blocked ports!
+echo   -----------------------------------------------------
+echo.
+.\nginx.exe -t
+pause
+exit /b 1
+
+:nginx_test_ok
 
 :: Start or reload Nginx
 tasklist | findstr /i "nginx.exe" >nul
@@ -1063,38 +1148,6 @@ echo.
 
 :after_sshd_flow
 
-:: ── SMB UAC Check ─────────────────────────────────────────────
-if "!SSHD_STATUS!"=="running" goto after_smb_uac
-
-set "ORIG_SMB_UAC_POLICY=no_change"
-reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy 2>nul | findstr /i "0x1" >nul
-if !errorlevel! equ 0 goto after_smb_uac
-
-echo.
-echo   [Windows SMB UAC Policy Check]
-echo   -----------------------------------------------------
-echo   By default, Windows blocks custom administrator accounts (except the built-in 'Administrator')
-echo   from accessing the C$ administrative share remotely.
-echo   If you plan to run client scripts using a custom username without SSH,
-echo   you should enable this registry policy.
-echo.
-set "ENABLE_SMB_UAC=n"
-set /p ENABLE_SMB_UAC=  Do you want to enable remote C$ access for all administrators now? [y/N]: 
-if /i not "!ENABLE_SMB_UAC!"=="y" goto after_smb_uac
-
-:: Backup original policy value
-set "ORIG_SMB_UAC_POLICY=missing"
-for /f "tokens=3" %%A in ('reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy 2^>nul') do (
-    set "ORIG_SMB_UAC_POLICY=%%A"
-)
-
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f >nul 2>&1
-if !errorlevel! equ 0 echo   !GREEN![OK]!RESET! Registry policy updated successfully.
-if !errorlevel! neq 0 echo   !RED![ERROR]!RESET! Failed to update registry. Please run this script as Administrator.
-echo.
-
-:after_smb_uac
-
 :do_save_and_summary
 :: ── Save Config ─────────────────────────────────────────────
 (
@@ -1106,7 +1159,6 @@ echo CUSTOM_KEY=!CUSTOM_KEY!
 echo RELOAD_CMD=!RELOAD_CMD!
 echo PROXY_PORTS=!PROXY_PORTS!
 echo PORT_OFFSET=!PORT_OFFSET!
-echo ORIG_SMB_UAC_POLICY=!ORIG_SMB_UAC_POLICY!
 ) > "!CONF_FILE!"
 
 :: ── Extract certificate details for summary ───────────────
@@ -1284,11 +1336,6 @@ if /i not "!UNINSTALL_CONFIRM!"=="y" (
     pause
     exit /b 0
 )
-
-:: Restore SMB UAC Registry Policy
-if "!ORIG_SMB_UAC_POLICY!"=="missing" reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /f >nul 2>&1
-if "!ORIG_SMB_UAC_POLICY!"=="missing" echo   !GREEN![OK]!RESET! Restored SMB UAC registry policy (removed LocalAccountTokenFilterPolicy).
-if not "!ORIG_SMB_UAC_POLICY!"=="" if not "!ORIG_SMB_UAC_POLICY!"=="no_change" if not "!ORIG_SMB_UAC_POLICY!"=="missing" reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d !ORIG_SMB_UAC_POLICY! /f >nul 2>&1 && echo   !GREEN![OK]!RESET! Restored SMB UAC registry policy to !ORIG_SMB_UAC_POLICY!.
 
 :: Restore Custom files
 if "!PROFILE!"=="custom" (

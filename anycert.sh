@@ -873,6 +873,67 @@ install_cert() {
     done
     NGINX_SERVER_NAMES="${NGINX_SERVER_NAMES} localhost 127.0.0.1"
     
+    # Detect if Port 80 is occupied on the server to prevent Nginx bind failure
+    local PORT_80_OCCUPIED=false
+    if command -v ss &>/dev/null; then
+      if ss -tuln | grep -qE ':(80|0\.0\.0\.0:80|\[::\]:80) '; then
+        PORT_80_OCCUPIED=true
+      fi
+    elif command -v netstat &>/dev/null; then
+      if netstat -tuln | grep -qE ':(80|0\.0\.0\.0:80|\[::\]:80) '; then
+        PORT_80_OCCUPIED=true
+      fi
+    else
+      if lsof -i :80 &>/dev/null; then
+        PORT_80_OCCUPIED=true
+      fi
+    fi
+
+    # Determine HTML root directory
+    local HTML_ROOT="/var/www/anycert"
+    if $IS_MAC; then
+      HTML_ROOT="${BREW_PREFIX}/var/www/anycert"
+    fi
+    mkdir -p "$HTML_ROOT"
+
+    # Copy the landing page from repo's public/ directory (JS fetches /anycert/anycert.conf at runtime)
+    local SCRIPT_DIR
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -f "${SCRIPT_DIR}/public/index.html" ]]; then
+      cp "${SCRIPT_DIR}/public/index.html" "${HTML_ROOT}/index.html"
+      ok "AnyCert landing page deployed: ${HTML_ROOT}/index.html"
+    else
+      warn "public/index.html not found in ${SCRIPT_DIR}/public/ — skipping landing page."
+    fi
+
+    if [ "$PORT_80_OCCUPIED" = "false" ]; then
+        # Write Standard HTTP 80 server block for zero-password client distribution
+        cat << EOF >> "$NGINX_CONF"
+# Standard HTTP Server for Client Certificate Distribution
+server {
+    listen       80;
+    server_name  ${NGINX_SERVER_NAMES};
+
+    location /anycert/anycert-ca.crt {
+        alias /etc/anycert/anycert-ca.crt;
+        default_type application/x-x509-ca-cert;
+    }
+
+    location /anycert/anycert.conf {
+        alias /etc/anycert/anycert.conf;
+        default_type text/plain;
+    }
+
+    location / {
+        root   ${HTML_ROOT};
+        index  index.html index.htm;
+    }
+}
+EOF
+    else
+        echo "  [INFO] Port 80 is occupied by another service. Skipping Nginx 80 HTTP server block to avoid collision."
+    fi
+
     # Write server blocks
     ASSIGNED_SSL_PORTS=()
     for M in ${PROXY_PORTS}; do
@@ -893,6 +954,19 @@ server {
 
     ssl_certificate      /etc/anycert/anycert-server.crt;
     ssl_certificate_key  /etc/anycert/anycert-server.key;
+
+    # Redirect HTTP requests to HTTPS on the same SSL port
+    error_page 497 https://\$http_host\$request_uri;
+
+    location /anycert/anycert-ca.crt {
+        alias /etc/anycert/anycert-ca.crt;
+        default_type application/x-x509-ca-cert;
+    }
+
+    location /anycert/anycert.conf {
+        alias /etc/anycert/anycert.conf;
+        default_type text/plain;
+    }
 
     location / {
         proxy_pass http://${BIP}:${P};

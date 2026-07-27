@@ -333,11 +333,20 @@ sudo bash anycert-macos.sh
 The client scripts will:
 1. Ask for the Server IP and SSH username.
 2. **Smart Transmission & CA Download**:
-   - **SCP Download**: Attempts to safely copy the Root CA certificate using SCP first.
-   - **SMB Fallback (Specifically for Windows Server)**: If the remote server is running Windows and SSH is unavailable (causing SCP to fail), the client script will automatically fall back to the **Windows SMB (Port 445) channel**.
+   - **HTTP/HTTPS Curl Download (Priority 1, Password-free)**: If the server uses Nginx Proxy or Gateway mode (Profile 1 or 2), the server Nginx will automatically serve the Root CA and configuration on Port 80. If Port 80 is occupied by another service on the server, anycert will **automatically skip Port 80 binding** to prevent collision. Additionally, download endpoints are also registered inside **each enabled SSL (HTTPS) port**. If Port 80 download fails, the client will automatically probe backup SSL ports (e.g. `13000`, `18080`, `21434`) for **password-free HTTPS curl download**, ensuring seamless and collision-free distribution. *(Note: Profile 3/4 users can manually add a location `/anycert/` block in their own Nginx config to enjoy this.)*
+   - **SCP Download (Priority 2, SSH-backed)**: If HTTP download fails, the client automatically falls back to SCP.
+   - **SMB Fallback (Priority 3, Specifically for Windows Server)**: If both HTTP and SCP fail (e.g. Windows server without SSH active), the client script will automatically fall back to the **Windows SMB (Port 445) channel**.
      - *Linux Client*: Automatically checks and installs `smbclient` if missing, then fetches the certificate directly.
      - *macOS Client*: Uses the native `mount_smbfs` system command to cleanly mount the `c$` administrative share and fetch the file.
      - *Smart FQDN Detection*: If SMB connects successfully, it will parse the remote `anycert.conf` directly to extract the FQDN, saving you from entering passwords multiple times or setting up SSH.
+     > [!IMPORTANT]
+     > **Windows SMB UAC Restriction (Access is denied)**
+     > Windows blocks remote non-built-in Administrator accounts (e.g. self-created admin accounts) from accessing administrative shares (like `C$`) remotely.
+     > If you get a "System error 5" or "Access is denied" error during SMB fallback:
+     > 1. Run the client script again and use the built-in **`Administrator`** account (capital A).
+     > 2. Or run this command as Administrator on the Windows server to bypass the restriction (takes effect immediately, no restart required):
+     >    `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f`
+     > 3. **How to Restore**: To revert this security setting, you can run the following command as Administrator on the server to immediately disable the bypass: `reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /f`
    - **Offline / Manual Copy Mode**: If the Windows Server has disabled both SSH and SMB, you can choose `Option 2` (Manual Mode) to manually transfer the `anycert-ca.crt` file using a USB drive, RDP, or other methods. The script will still handle the entire installation process on the client.
 3. Detect the server's FQDN and add a mapping to the local `hosts` file.
 4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles, macOS handles Keychain).
