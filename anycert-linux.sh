@@ -41,6 +41,29 @@ REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 DATA_DIR="$REAL_HOME/.local/share/anycert"
 INFO_FILE="$DATA_DIR/anycert-info.txt"
 
+# ── CLI Arguments Parsing ────────────────────────────────────
+SERVER_IP_ARG=""
+UNINSTALL_ARG=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s|--server|--server-ip)
+      SERVER_IP_ARG="$2"
+      shift 2
+      ;;
+    -u|--uninstall)
+      UNINSTALL_ARG=true
+      shift
+      ;;
+    *)
+      if [[ "$1" != -* && -z "$SERVER_IP_ARG" ]]; then
+        SERVER_IP_ARG="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
 auto_install_cmd() {
     local CMD="$1"
     local PKG="$2"
@@ -269,7 +292,7 @@ remove_nss() {
 # ============================================================
 #  UNINSTALL MODE
 # ============================================================
-if [[ "${1:-}" == "-u" ]]; then
+if $UNINSTALL_ARG || [[ "${1:-}" == "-u" ]]; then
     echo "[Uninstall Mode] Removing Anycert Certificates and hosts Entries"
     echo "-----------------------------------------------------"
     echo
@@ -393,7 +416,7 @@ if [[ -f "$INFO_FILE" && -s "$INFO_FILE" ]]; then
     HAS_SERVERS=1
 fi
 
-if [[ $HAS_SERVERS -eq 1 ]]; then
+if [[ $HAS_SERVERS -eq 1 && -z "$SERVER_IP_ARG" ]]; then
     echo "  Currently registered Anycert servers:"
     echo "  -----------------------------------"
     awk '{print "    " $1 "  <>  " $2}' "$INFO_FILE"
@@ -413,12 +436,16 @@ if [[ $HAS_SERVERS -eq 1 ]]; then
     echo ""
 fi
 
-echo "Please choose how to download/import the CA certificate:"
-echo "  [1] Automatically download via SSH (Default)"
-echo "  [2] Use a manually copied local CA certificate (Offline/Manual Mode)"
-echo
-read -rp "  Please choose [1-2, default: 1]: " IMPORT_MODE
-IMPORT_MODE=${IMPORT_MODE:-1}
+if [[ -n "$SERVER_IP_ARG" ]]; then
+    IMPORT_MODE=1
+else
+    echo "Please choose how to download/import the CA certificate:"
+    echo "  [1] Automatic Download (HTTP / SSH / SMB) [Default]"
+    echo "  [2] Use a manually copied local CA certificate (Offline/Manual Mode)"
+    echo
+    read -rp "  Please choose [1-2, default: 1]: " IMPORT_MODE
+    IMPORT_MODE=${IMPORT_MODE:-1}
+fi
 
 if [[ "$IMPORT_MODE" == "2" ]]; then
     echo
@@ -455,8 +482,13 @@ if ! $IS_OFFLINE; then
 echo "[Step 1/5] Input Server Information"
 echo "-----------------------------------------------------"
 echo
-read -rp "  Server IP Address [e.g. 192.168.1.100]: " SERVER_IP
-[[ -z "$SERVER_IP" ]] && { echo "[ERROR] IP Address cannot be empty."; exit 1; }
+if [[ -n "$SERVER_IP_ARG" ]]; then
+    SERVER_IP="$SERVER_IP_ARG"
+    echo -e "  ${GREEN}[INFO]${RESET} Using Server IP provided via argument: ${CYAN}${SERVER_IP}${RESET}"
+else
+    read -rp "  Server IP Address [e.g. 192.168.1.100]: " SERVER_IP
+    [[ -z "$SERVER_IP" ]] && { echo "[ERROR] IP Address cannot be empty."; exit 1; }
+fi
 
 if [[ -f "$INFO_FILE" ]] && grep -q "^$SERVER_IP " "$INFO_FILE"; then
     echo "  [WARN] This IP has already been registered."
@@ -467,6 +499,7 @@ fi
 
 
 
+echo
 echo "[Step 2/5] Download Server Root CA Certificate"
 echo "-----------------------------------------------------"
 

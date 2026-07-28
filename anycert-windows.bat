@@ -14,13 +14,30 @@ chcp 65001 >nul 2>&1
 title Anycert Client Certificate Installer
 
 :: Define ANSI colors (fully PowerShell-free and locale-safe)
-echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs"
-for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs"') do set "ESC=%%A"
-if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs"
-set "YELLOW=!ESC![1;33m"
-set "CYAN=!ESC![1;36m"
-set "BLUE=!ESC![1;34m"
-set "RESET=!ESC![0m"
+set "ESC="
+echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs" 2>nul
+for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs" 2^>nul') do (
+    set "TEST_ESC=%%A"
+    if not "!TEST_ESC:~1,1!"=="" set "TEST_ESC="
+    if not "!TEST_ESC!"=="" set "ESC=!TEST_ESC!"
+)
+if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs" >nul 2>&1
+
+if defined ESC (
+    set "YELLOW=!ESC![1;33m"
+    set "CYAN=!ESC![1;36m"
+    set "BLUE=!ESC![1;34m"
+    set "GREEN=!ESC![1;32m"
+    set "RED=!ESC![1;31m"
+    set "RESET=!ESC![0m"
+) else (
+    set "YELLOW="
+    set "CYAN="
+    set "BLUE="
+    set "GREEN="
+    set "RED="
+    set "RESET="
+)
 
 echo.
 echo !YELLOW! █████╗ ███╗   ██╗██╗   ██╗ ██████╗███████╗██████╗ ████████╗!RESET!
@@ -39,7 +56,7 @@ if %errorlevel% neq 0 (
     set /p ELEVATE_CONFIRM=  Would you like to elevate to Administrator now? [y/N]: 
     if /i "!ELEVATE_CONFIRM!"=="y" (
         echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
-        echo UAC.ShellExecute "cmd.exe", "/c ""%~dp0%~nx0"" %*", "", "runas", 1 >> "%temp%\getadmin.vbs"
+        echo UAC.ShellExecute "%~dp0%~nx0", "%*", "", "runas", 1 >> "%temp%\getadmin.vbs"
         "%temp%\getadmin.vbs"
         del "%temp%\getadmin.vbs"
         exit /b 0
@@ -55,7 +72,42 @@ set DATA_DIR=%ProgramData%\anycert
 if not exist "!DATA_DIR!" mkdir "!DATA_DIR!"
 set INFO_FILE=!DATA_DIR!\anycert-info.txt
 
-if /i "%~1"=="-u" goto do_uninstall
+:: ── Parse CLI arguments ──────────────────────────────────────
+set "SERVER_IP_ARG="
+set "UNINSTALL_ARG=0"
+
+:parse_args_loop
+if "%~1"=="" goto after_parse_args
+if /i "%~1"=="-s" (
+    set "SERVER_IP_ARG=%~2"
+    shift
+    shift
+    goto parse_args_loop
+)
+if /i "%~1"=="/s" (
+    set "SERVER_IP_ARG=%~2"
+    shift
+    shift
+    goto parse_args_loop
+)
+if /i "%~1"=="-u" (
+    set "UNINSTALL_ARG=1"
+    shift
+    goto parse_args_loop
+)
+if /i "%~1"=="--uninstall" (
+    set "UNINSTALL_ARG=1"
+    shift
+    goto parse_args_loop
+)
+if not "%~1"=="" (
+    if "!SERVER_IP_ARG!"=="" set "SERVER_IP_ARG=%~1"
+    shift
+    goto parse_args_loop
+)
+:after_parse_args
+
+if "!UNINSTALL_ARG!"=="1" goto do_uninstall
 
 :: ============================================================
 ::  INSTALL MODE
@@ -66,6 +118,7 @@ if exist "!INFO_FILE!" (
     for /f "tokens=1,2" %%A in (!INFO_FILE!) do set HAS_SERVERS=1
 )
 
+if not "!SERVER_IP_ARG!"=="" goto do_skip_menu
 if not "!HAS_SERVERS!"=="1" goto do_skip_menu
 
 echo   Currently registered Anycert servers:
@@ -86,8 +139,13 @@ echo.
 :do_skip_menu
 
 :: ── Choose Import Mode ───────────────────────────────────────
+if not "!SERVER_IP_ARG!"=="" (
+    set IMPORT_MODE=1
+    goto do_import_ssh
+)
+
 echo Please choose how to download/import the CA certificate:
-echo   [1] Automatically download via SSH (Default)
+echo   [1] Automatic Download (HTTP / SSH / SMB) [Default]
 echo   [2] Use a manually copied local CA certificate (Offline/Manual Mode)
 echo.
 :choose_import_loop
@@ -148,12 +206,18 @@ exit /b 1
 echo [Step 1/5] Input Server Information
 echo -----------------------------------------------------
 echo.
+if not "!SERVER_IP_ARG!"=="" (
+    set "SERVER_IP=!SERVER_IP_ARG!"
+    echo   !GREEN![INFO]!RESET! Using Server IP provided via argument: !CYAN!!SERVER_IP!!RESET!
+    goto server_ip_set
+)
 set /p SERVER_IP=  Server IP Address [e.g. 192.168.1.100]: 
 if "!SERVER_IP!"=="" (
     echo [ERROR] IP Address cannot be empty.
     pause
     exit /b 1
 )
+:server_ip_set
 
 if exist "!INFO_FILE!" (
     set ALREADY=0
@@ -174,6 +238,7 @@ if exist "!INFO_FILE!" (
 
 
 :: ── Step 2 ───────────────────────────────────────────────────
+echo.
 echo [Step 2/5] Download Server Root CA Certificate
 echo -----------------------------------------------------
 

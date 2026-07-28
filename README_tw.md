@@ -1,4 +1,4 @@
-![anycert](pic/banner.svg)
+![anycert](docs/pic/banner.svg)
 
 # anycert — 本機開發、私有網路與企業自架服務的受信 HTTPS 工具
 
@@ -12,21 +12,23 @@ anycert 是一套跨平台憑證工具，適用於私有網路、homelab，以�
 
 ## 快速開始
 
-**伺服器端**（產生並部署憑證）：
+**伺服器端**（產生並部署憑證與 Nginx 首頁）：
 ```bash
 git clone https://github.com/anomixer/anycert.git
 cd anycert
-sudo bash anycert.sh
+sudo bash anycert.sh  # Windows 伺服器：以系統管理員執行 anycert.bat
 ```
 
-**每台用戶端**（信任 CA）：
-```bash
-# Windows：右鍵 anycert-windows.bat → 以系統管理員身分執行
-# Linux：
-sudo bash anycert-linux.sh
-# macOS：
-sudo bash anycert-macos.sh
-```
+**每台用戶端**（信任 CA — 推薦選項 A）：
+- **Option A (首選⭐ 網頁一鍵下載)**：用瀏覽器開啟 `http://<SERVER_IP>/`，直接在 AnyCert 首頁點擊下載並執行對應平台的安裝腳本！
+- **Option B (命令列/CLI)**：
+  ```bash
+  # Windows：右鍵 anycert-windows.bat → 以系統管理員身分執行
+  # Linux：
+  sudo bash anycert-linux.sh
+  # macOS：
+  sudo bash anycert-macos.sh
+  ```
 
 **完成。** 直接以 `https://<your-fqdn>:<port>` 或 `https://<your-ip>:<port>` 安全存取您的伺服器。
 
@@ -149,48 +151,44 @@ anycert 具備高度跨平台特性，並已在實際區域網路 (LAN) 環境�
 | **伺服器本機瀏覽器安全存取** |  ✅  |  ✅  |  ✅  | ✅  | 不適用 (無 GUI) |
 | **Server 本機是否需執行用戶端導入？** | ✅ 免 |  ✅ 需  |  ✅ 需  | ✅ 需  | 不適用 (無 GUI) |
 
-### 2. 用戶端信任導入 (Client Trust Setup)
-| 用戶端系統 \ 伺服器端平台 | Windows | Linux | macOS | WSL 2 | Proxmox VE |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **`anycert-windows.bat` (Windows 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
-| **`anycert-linux.sh` (Linux 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
-| **`anycert-macos.sh` (macOS 用戶端)** |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+### 步驟二 — 在每台用戶端執行 (信任 CA)
+
+AnyCert 提供三種彈性的用戶端設定方式：
+
+#### 🌟 Option A：網頁一鍵下載自動安裝（最推薦 ⭐）
+1. 在用戶端裝置打開瀏覽器，連線至 AnyCert 伺服器首頁：
+   `http://<SERVER_IP>/` 或 `https://<SERVER_IP>/`（預設放行 HTTP Port 80 與標準 HTTPS Port 443 首頁）
+2. 頁面包含深色高顏值 AnyCert Landing Page，顯示伺服器資訊、HTTPS 代理埠卡片與**動態連線安全狀態條**。
+3. 頁面具備 **Root CA 信任背景自動探測**：若尚未信任 CA，會明確說明 HTTP 下網址列「不安全」的原因並提供測試連結；當執行完腳本信任 CA 後，切換至 `https://<SERVER_IP>/` 即可直接看到亮起的綠色/灰色安全鎖頭 🔒！
+4. 首頁內建 **用戶端 OS 智慧自動偵測**，會自動識別當前連線裝置（Windows / Linux / macOS），並高亮標示專屬的 **`DETECTED`** 下載按鈕。
+
+#### ⚡ Option B：命令列 / 遠端腳本自動安裝 (CLI)
+若用戶端已下載或取得 AnyCert 腳本，可加上 `-s <SERVER_IP>` 參數達成**全程免手動輸入**自動安裝：
+- **Windows 用戶端**：`anycert-windows.bat -s <SERVER_IP>`（右鍵以系統管理員身分執行）
+- **Linux 用戶端 (Ubuntu / Debian)**：`sudo bash anycert-linux.sh -s <SERVER_IP>`
+- **macOS 用戶端**：`sudo bash anycert-macos.sh -s <SERVER_IP>`
+
+#### 🛠️ Option C：純手動模式 (Manual Setup)
+1. 透過 HTTP 或 SCP 下載 Root CA 憑證：
+   - HTTP：`curl -s -L -o anycert-ca.crt http://<SERVER_IP>/anycert/anycert-ca.crt`
+   - SCP：`scp user@<SERVER_IP>:/etc/anycert/anycert-ca.crt ./anycert-ca.crt`
+2. 將 IP 與 FQDN 寫入用戶端的 `hosts` 檔案中 (`<SERVER_IP>  <SERVER_FQDN>`)。
+3. 將 CA 憑證匯入用戶端系統信任區與瀏覽器，完成設定。
 
 ---
 
-## 檔案說明
-
-### 伺服器端 (產證與套用)
-| 檔案 | 平台 | 用途 |
-|------|------|------|
-| `anycert.sh` | Linux (含 WSL) / macOS 伺服器 | 產生 Root CA + 伺服器憑證，支援 PVE、Nginx 反代一鍵代理 (推薦)、自訂路徑套用與服務重啟 |
-| `anycert.bat` | Windows 伺服器 | 產生 Root CA + 伺服器憑證，支援 Nginx 反代一鍵代理 (推薦)、自訂路徑套用與指令重啟 |
-
-### 用戶端 (下載與信任)
-| 檔案 | 平台 | 用途 |
-|------|------|------|
-| `anycert-windows.bat` | Windows 用戶端 | 下載 CA 憑證、更新 hosts、匯入 Windows 信任存放區 |
-| `anycert-linux.sh` | Linux 用戶端 (Ubuntu/Debian) | 下載 CA 憑證、更新 hosts、匯入系統與瀏覽器 (Chrome/Firefox) 信任存放區 |
-| `anycert-macos.sh` | macOS 用戶端 | 下載 CA 憑證、更新 hosts、匯入 macOS Keychain |
-
----
-
-## 安裝步驟
-
-### 步驟一 — 在伺服器端執行 (產生憑證)
-
-#### Linux (含 WSL) / macOS 伺服器：
-在伺服器上 clone 此 repo 並執行 `anycert.sh`：
-```bash
-git clone https://github.com/anomixer/anycert.git
-cd anycert
-sudo bash anycert.sh
-```
-腳本將會：
-1. 自動偵測 IP、主機名稱與 FQDN。您可以確認並**選擇性輸入額外的 IP 位址（以空白分隔）**，例如 Tailscale IP、VPN IP 或其他實體網路 IP，以一併寫入憑證的 SAN（主機別名）以及 Nginx 的 `server_name` 配置中。
-2. 提供服務部署設定檔 (Service Profile) 選擇（一般伺服器提供 **4 個**選項，若在 Proxmox VE 系統則會自動多出 PVE 專屬選項共 **5 個**）：
-    - **[1] Auto-Setup Nginx SSL Proxy [Single-Host] [Lazy-Friendly / Recommended] (單機代理模式)**：自動偵測伺服器目前正在監聽的 TCP Ports，一鍵封裝本地 HTTP 連接埠至 `HTTPS Port + 偏移量`（**偏移量預設為 10000**，例如 `3000 -> 13000`）。
-    - **[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host] (獨立網關模式)**：專門用於獨立 VM 網關主機。免除本機 port 掃描，直接引導輸入後端 `IP:PORT` 清單，且**連接埠預設無偏移** (1-to-1 映射，例如後端服務是 `3000`，Gateway 上的 Nginx 就直接監聽 HTTPS `3000` 轉發)。
+### 💡 用戶端自動化腳本運作機制：
+1. **智慧傳輸與下載 Root CA**：
+   - **HTTP/HTTPS Curl 下載 (優先，免密碼/免 SSH)**：伺服器端部署時會自動經由 Nginx 80 埠與所有 SSL Wrapper 埠公開 Root CA、設定檔與三個平台的用戶端安裝腳本。用戶端腳本會優先發送 HTTP/HTTPS 請求進行 **零密碼、秒級拉取**，安全且 100% 避免衝突。
+   - **SCP 下載 (備用，需 SSH)**：若 HTTP Curl 下載失敗，用戶端會自動降級嘗試使用 SCP 進行安全複製。
+   - **SMB 備用通道 (備用，特別針對 Windows 伺服器)**：若 SCP 與 HTTP 皆失敗（如伺服器端為 Windows 且未開啟 SSH 服務），用戶端腳本會自動改走 **Windows SMB (Port 445) 管道**。
+     - *Linux 用戶端*：自動檢查並引導安裝 `smbclient`，直接拉取憑證。
+     - *macOS 用戶端*：使用內建 `mount_smbfs` 機制無痕掛載 `c$` 共用區拉取。
+     - *智慧 FQDN 讀取*：若使用 SMB 連線成功，將直接解析 remote 的 `anycert.conf` 取得 FQDN，完全免除 SSH 連線或密碼手動重複輸入。
+   - **離線手動複製模式 (Offline / Manual Mode)**：若 Windows Server 既無 SSH 也無 SMB，您可選擇 Manual Mode 手動拷貝 CA 憑證至本機，腳本仍會為您自動執行後續所有的信任區與 hosts 安裝設定！
+2. **FQDN 自動對應**：自動將 FQDN 寫入用戶端的 `hosts` 檔案中。
+3. **系統與瀏覽器信任**：將 CA 憑證匯入系統信任區（Linux 版會同時自動匯入 Chrome 與 Firefox 的 NSS 憑證資料庫，macOS 版匯入 Keychain）。
+4. **列出所有可用 HTTPS URLs**：對於所有設定的反向代理連接埠，腳本會同時列出 FQDN 版本與 IP 版本的 HTTPS 網址（例如 `https://mysrv:13000` 與 `https://192.168.1.100:13000`）。[2] Auto-Setup Nginx SSL Gateway [Dedicated Gateway / Multi-Host] (獨立網關模式)**：專門用於獨立 VM 網關主機。免除本機 port 掃描，直接引導輸入後端 `IP:PORT` 清單，且**連接埠預設無偏移** (1-to-1 映射，例如後端服務是 `3000`，Gateway 上的 Nginx 就直接監聽 HTTPS `3000` 轉發)。
     - **[3] Custom Path**：自訂憑證與金鑰複製目標路徑，並可設定自訂的重啟/重載服務指令（適用於已有現成 HTTPS 服務的環境）。
     - **[4] Generate Only**：僅產生檔案於 `/etc/anycert/` 中，供手動套用。
     - **[5] Proxmox VE (PVE)**：*（僅在 PVE 系統執行時顯示）* 自動備份並覆蓋 PVE 預設憑證，並重啟 `pveproxy`。
@@ -515,3 +513,10 @@ sudo bash anycert-macos.sh -u
 anycert-windows.bat -u
 ```
 會提供已註冊網站列表，允許您單個或全部刪除 hosts 項目與匯入的 Root CA 信任。
+
+---
+
+## 📜 授權條款 (License)
+
+本專案採用 **[MIT License](LICENSE)** 授權釋出。  
+Author / 開發者：**[anomixer](https://github.com/anomixer)**

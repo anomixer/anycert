@@ -13,16 +13,32 @@ chcp 65001 >nul 2>&1
 title Anycert Windows Server Certificate Generator
 
 :: Define ANSI colors (fully PowerShell-free and locale-safe)
-echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs"
-for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs"') do set "ESC=%%A"
-if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs"
-set "YELLOW=!ESC![1;33m"
-set "CYAN=!ESC![0;36m"
-set "BLUE=!ESC![0;34m"
-set "GREEN=!ESC![0;32m"
-set "RED=!ESC![0;31m"
-set "BOLD=!ESC![1m"
-set "RESET=!ESC![0m"
+set "ESC="
+echo WScript.Echo Chr^(27^) > "%temp%\getesc.vbs" 2>nul
+for /f "delims=" %%A in ('cscript //nologo "%temp%\getesc.vbs" 2^>nul') do (
+    set "TEST_ESC=%%A"
+    if not "!TEST_ESC:~1,1!"=="" set "TEST_ESC="
+    if not "!TEST_ESC!"=="" set "ESC=!TEST_ESC!"
+)
+if exist "%temp%\getesc.vbs" del "%temp%\getesc.vbs" >nul 2>&1
+
+if defined ESC (
+    set "YELLOW=!ESC![1;33m"
+    set "CYAN=!ESC![0;36m"
+    set "BLUE=!ESC![0;34m"
+    set "GREEN=!ESC![0;32m"
+    set "RED=!ESC![0;31m"
+    set "BOLD=!ESC![1m"
+    set "RESET=!ESC![0m"
+) else (
+    set "YELLOW="
+    set "CYAN="
+    set "BLUE="
+    set "GREEN="
+    set "RED="
+    set "BOLD="
+    set "RESET="
+)
 
 echo.
 echo !YELLOW! █████╗ ███╗   ██╗██╗   ██╗ ██████╗███████╗██████╗ ████████╗!RESET!
@@ -51,7 +67,7 @@ if %errorlevel% neq 0 (
     set /p ELEVATE_CONFIRM=  Would you like to elevate to Administrator now? [y/N]: 
     if /i "!ELEVATE_CONFIRM!"=="y" (
         echo Set UAC = CreateObject^("Shell.Application"^) > "%temp%\getadmin.vbs"
-        echo UAC.ShellExecute "cmd.exe", "/c ""%~dp0%~nx0"" %*", "", "runas", 1 >> "%temp%\getadmin.vbs"
+        echo UAC.ShellExecute "%~dp0%~nx0", "%*", "", "runas", 1 >> "%temp%\getadmin.vbs"
         "%temp%\getadmin.vbs"
         del "%temp%\getadmin.vbs"
         exit /b 0
@@ -913,10 +929,38 @@ exit /b 1
 
 :nginx_installed
 
+:: Ensure required logs, temp, and html directories exist (required for Nginx on Windows)
+if not exist "!NGINX_DIR!\logs" mkdir "!NGINX_DIR!\logs" >nul 2>&1
+if not exist "!NGINX_DIR!\temp" mkdir "!NGINX_DIR!\temp" >nul 2>&1
+if not exist "!NGINX_DIR!\html" mkdir "!NGINX_DIR!\html" >nul 2>&1
 
-:: Create clean config
+:: Create clean config directory
 if not exist "!NGINX_DIR!\conf" mkdir "!NGINX_DIR!\conf" >nul 2>&1
 set NGINX_CONF=!NGINX_DIR!\conf\nginx.conf
+
+:: Ensure mime.types exists (required for include mime.types inside nginx.conf)
+if not exist "!NGINX_DIR!\conf\mime.types" (
+    (
+    echo types {
+    echo     text/html                             html htm shtml;
+    echo     text/css                              css;
+    echo     text/xml                              xml;
+    echo     image/gif                             gif;
+    echo     image/jpeg                            jpeg jpg;
+    echo     application/javascript                js;
+    echo     application/atom+xml                  atom;
+    echo     application/rss+xml                   rss;
+    echo     text/plain                            txt;
+    echo     image/png                             png;
+    echo     image/svg+xml                         svg svgz;
+    echo     image/webp                            webp;
+    echo     application/json                      json;
+    echo     application/x-x509-ca-cert            der pem crt;
+    echo     application/octet-stream              bin exe dll iso img msi bat sh;
+    echo }
+    ) > "!NGINX_DIR!\conf\mime.types"
+    echo   !GREEN![OK]!RESET! Default mime.types created in C:\nginx\conf\mime.types
+)
 
 :: Build Nginx server_name list (FQDN + primary IP + extra IPs + localhost)
 set NGINX_SERVER_NAMES=!SERVER_FQDN! !SERVER_IP!
@@ -927,13 +971,21 @@ for %%E in (!EXTRA_IPS!) do (
 )
 set NGINX_SERVER_NAMES=!NGINX_SERVER_NAMES! localhost 127.0.0.1
 
-:: Detect if Port 80 is occupied on the Windows server
+:: Temporarily stop Nginx daemon to check if Port 80 is occupied by ANOTHER service
+taskkill /f /im nginx.exe >nul 2>&1
+
+:: Detect if Port 80 & 443 are occupied on the Windows server
 set "PORT_80_OCCUPIED=0"
 netstat -ano | findstr /i "listening" | findstr /c:":80 " /c:"]:80 " >nul 2>&1
 if !errorlevel! equ 0 set "PORT_80_OCCUPIED=1"
 
+set "PORT_443_OCCUPIED=0"
+netstat -ano | findstr /i "listening" | findstr /c:":443 " /c:"]:443 " >nul 2>&1
+if !errorlevel! equ 0 set "PORT_443_OCCUPIED=1"
+
 (
 echo worker_processes  1;
+echo error_log  logs/error.log  warn;
 echo.
 echo events {
 echo     worker_connections  1024;
@@ -942,12 +994,13 @@ echo.
 echo http {
 echo     include       mime.types;
 echo     default_type  application/octet-stream;
+echo     access_log    logs/access.log;
 echo     sendfile        on;
 echo     keepalive_timeout  65;
 echo.
 ) > "!NGINX_CONF!"
 
-:: Deploy AnyCert landing page (JS fetches /anycert/anycert.conf at runtime for dynamic content)
+:: Deploy AnyCert landing page and client scripts
 set "HTML_DEST=!NGINX_DIR!\html\index.html"
 set "HTML_SRC=%~dp0public\index.html"
 if exist "!HTML_SRC!" (
@@ -955,6 +1008,14 @@ if exist "!HTML_SRC!" (
     echo   !GREEN![OK]!RESET! AnyCert landing page deployed: !HTML_DEST!
 ) else (
     echo   [WARN] public\index.html not found next to anycert.bat ^- skipping landing page.
+)
+
+:: Copy client installation scripts for local HTTP distribution
+for %%F in (anycert-windows.bat anycert-linux.sh anycert-macos.sh) do (
+    if exist "%~dp0%%F" (
+        copy /y "%~dp0%%F" "!CONF_DIR!\%%F" >nul 2>&1
+        copy /y "%~dp0%%F" "!NGINX_DIR!\html\%%F" >nul 2>&1
+    )
 )
 
 if "!PORT_80_OCCUPIED!"=="0" (
@@ -975,6 +1036,21 @@ if "!PORT_80_OCCUPIED!"=="0" (
     echo             default_type text/plain;
     echo         }
     echo.
+    echo         location /anycert/anycert-windows.bat {
+    echo             alias C:/anycert/anycert-windows.bat;
+    echo             default_type application/octet-stream;
+    echo         }
+    echo.
+    echo         location /anycert/anycert-linux.sh {
+    echo             alias C:/anycert/anycert-linux.sh;
+    echo             default_type text/plain;
+    echo         }
+    echo.
+    echo         location /anycert/anycert-macos.sh {
+    echo             alias C:/anycert/anycert-macos.sh;
+    echo             default_type text/plain;
+    echo         }
+    echo.
     echo         location / {
     echo             root   C:/nginx/html;
     echo             index  index.html index.htm;
@@ -983,6 +1059,62 @@ if "!PORT_80_OCCUPIED!"=="0" (
     ) >> "!NGINX_CONF!"
 ) else (
     echo   [INFO] Port 80 is occupied by another service. Skipping Nginx 80 HTTP server block to avoid collision.
+)
+
+if "!PORT_443_OCCUPIED!"=="0" (
+    (
+    echo.
+    echo     # Standard HTTPS SSL Server ^(Port 443^) for Landing Page
+    echo     server {
+    echo         listen       443 ssl;
+    echo         server_name  !NGINX_SERVER_NAMES!;
+    echo.
+    echo         ssl_certificate      C:/anycert/anycert-server.crt;
+    echo         ssl_certificate_key  C:/anycert/anycert-server.key;
+    echo.
+    echo         # Redirect HTTP requests to HTTPS on port 443
+    echo         error_page 497 https://$http_host$request_uri;
+    echo.
+    echo         location /anycert/anycert-ca.crt {
+    echo             alias C:/anycert/anycert-ca.crt;
+    echo             default_type application/x-x509-ca-cert;
+    echo         }
+    echo.
+    echo         location /anycert/anycert.conf {
+    echo             alias C:/anycert/anycert.conf;
+    echo             default_type text/plain;
+    echo         }
+    echo.
+    echo         location /anycert/anycert-windows.bat {
+    echo             alias C:/anycert/anycert-windows.bat;
+    echo             default_type application/octet-stream;
+    echo         }
+    echo.
+    echo         location /anycert/anycert-linux.sh {
+    echo             alias C:/anycert/anycert-linux.sh;
+    echo             default_type text/plain;
+    echo         }
+    echo.
+    echo         location /anycert/anycert-macos.sh {
+    echo             alias C:/anycert/anycert-macos.sh;
+    echo             default_type text/plain;
+    echo         }
+    echo.
+    echo         location /anycert/index.html {
+    echo             alias C:/nginx/html/index.html;
+    echo         }
+    echo.
+    echo         location /anycert/ {
+    echo             alias C:/nginx/html/;
+    echo             index index.html;
+    echo         }
+    echo.
+    echo         location / {
+    echo             root   C:/nginx/html;
+    echo             index  index.html index.htm;
+    echo         }
+    echo     }
+    ) >> "!NGINX_CONF!"
 )
 
 :: Loop over ports and write server blocks using label loop to avoid CMD parser bugs
@@ -1024,6 +1156,30 @@ echo             alias C:/anycert/anycert.conf;
 echo             default_type text/plain;
 echo         }
 echo.
+echo         location /anycert/anycert-windows.bat {
+echo             alias C:/anycert/anycert-windows.bat;
+echo             default_type application/octet-stream;
+echo         }
+echo.
+echo         location /anycert/anycert-linux.sh {
+echo             alias C:/anycert/anycert-linux.sh;
+echo             default_type text/plain;
+echo         }
+echo.
+echo         location /anycert/anycert-macos.sh {
+echo             alias C:/anycert/anycert-macos.sh;
+echo             default_type text/plain;
+echo         }
+echo.
+echo         location /anycert/index.html {
+echo             alias C:/nginx/html/index.html;
+echo         }
+echo.
+echo         location /anycert/ {
+echo             alias C:/nginx/html/;
+echo             index index.html;
+echo         }
+echo.
 echo         location / {
 echo             proxy_pass http://!BIP!:!RAW_PORT!;
 echo             proxy_set_header Host $http_host;
@@ -1059,10 +1215,10 @@ echo     2. !YELLOW!Windows (Hyper-V / WSL2) has dynamically reserved this port 
 echo     3. !YELLOW!Windows PortProxy (netsh interface portproxy) is forwarding this port.!RESET!
 echo        (Error 10013: An attempt was made to access a socket in a way forbidden...)
 echo.
-echo   [How to diagnose & fix]:
+echo   [How to diagnose ^& fix]:
 echo     * Check PortProxy rules:  netsh interface portproxy show all
 echo       If you find the blocked port, delete it using:
-echo       netsh interface portproxy delete v4tov4 listenport=<port>
+echo       netsh interface portproxy delete v4tov4 listenport=^<port^>
 echo.
 echo     * Check dynamic exclusions: netsh interface ipv4 show excludedportrange protocol=tcp
 echo.
@@ -1108,6 +1264,9 @@ if /i "!LOCAL_TRUST!"=="y" (
 echo.
 
 :: ── Check & Enable OpenSSH Server (optional) ─────────────────
+:: Skip OpenSSH prompt if Nginx HTTP/HTTPS distribution is active (Profiles 1, 2, 3)
+if not "!PROFILE!"=="none" goto after_sshd_flow
+
 set SSHD_STATUS=missing
 sc query sshd >nul 2>&1
 if not errorlevel 1 set SSHD_STATUS=stopped
@@ -1237,24 +1396,33 @@ echo.
 )
 echo   --------------------------------------------
 echo   [ Client Device Setup Steps ]
-echo   Option A: Manual
 echo.
-echo     1. Download the Root CA certificate on each client device:
-echo        scp -o StrictHostKeyChecking=no Administrator@!SERVER_IP!:!CA_CRT:\=/! ./anycert-ca.crt
-echo        (Use Windows SSH account to connect, or manually copy the CA file)
+echo   Option A: Web Browser One-Click Setup !GREEN![Recommended ⭐]!RESET!
 echo.
-echo     2. Add the following entry to the client's hosts file:
+echo     1. Open browser on client device and navigate to:
+echo        !GREEN!http://!SERVER_IP!/!RESET!
+echo.
+echo     2. Download the client installer script directly from the landing page and follow Option B.
+echo.
+echo   Option B: Automatic Client Script (CLI / Remote)
+echo.
+echo     Execute the client script directly on the client machine:
+echo        - Windows: !CYAN!anycert-windows.bat -s !SERVER_IP!!RESET!  (as Administrator)
+echo        - Linux:   !CYAN!sudo bash anycert-linux.sh -s !SERVER_IP!!RESET!
+echo        - macOS:   !CYAN!sudo bash anycert-macos.sh -s !SERVER_IP!!RESET!
+echo        (Zero prompt: automatically fetches CA and configures system trust ^& hosts)
+echo.
+echo   Option C: Manual Setup
+echo.
+echo     1. Download Root CA via HTTP or SCP:
+echo        HTTP: !GREEN!curl -s -L -o anycert-ca.crt http://!SERVER_IP!/anycert/anycert-ca.crt!RESET!
+echo        SCP:  scp -o StrictHostKeyChecking=no Administrator@!SERVER_IP!:!CA_CRT:\=/! ./anycert-ca.crt
+echo.
+echo     2. Add the following entry to client's hosts file:
 echo        !GREEN!!SERVER_IP!    !SERVER_FQDN!!RESET!
 echo.
-echo     3. Connect to the server from your browser using the FQDN:
-echo        !GREEN!https://!SERVER_FQDN!:^<port^>!RESET!
-echo.
-echo   Option B: Automatic
-echo.
-echo     !GREEN!👉 Recommended:!RESET! Execute the corresponding client script directly on the client machine:
-echo        - Windows: !CYAN!anycert-windows.bat!RESET!
-echo        - Linux:   !CYAN!sudo bash anycert-linux.sh!RESET!
-echo        - macOS:   !CYAN!sudo bash anycert-macos.sh!RESET!
+echo     3. Access your HTTPS services using FQDN or IP:
+echo        !GREEN!https://!SERVER_FQDN!:^<port^>!RESET!  or  !GREEN!https://!SERVER_IP!:^<port^>!RESET!
 echo.
 echo Installation complete!
 pause
@@ -1371,17 +1539,22 @@ if "!PROFILE!"=="custom" (
     )
 )
 
-:: Stop and clean up Nginx if applicable
-if "!PROFILE!"=="nginx_proxy" (
-    echo Stopping Nginx daemon...
-    taskkill /f /im nginx.exe >nul 2>&1
-    echo   !GREEN![OK]!RESET! Nginx daemon stopped.
-    if exist "C:\nginx" (
-        echo   Removing Nginx installation folder ^(C:\nginx^)...
-        rd /s /q "C:\nginx" >nul 2>&1
-        echo   !GREEN![OK]!RESET! C:\nginx removed successfully.
-    )
-)
+:: Stop and clean up Nginx if applicable (both proxy and gateway profiles)
+if "!PROFILE!"=="nginx_proxy" goto do_uninstall_nginx
+if "!PROFILE!"=="nginx_gateway" goto do_uninstall_nginx
+goto skip_nginx_uninstall
+
+:do_uninstall_nginx
+echo Stopping Nginx daemon...
+taskkill /f /im nginx.exe >nul 2>&1
+echo   !GREEN![OK]!RESET! Nginx daemon stopped.
+if not exist "C:\nginx" goto skip_nginx_dir_remove
+echo   Removing Nginx installation folder ^(C:\nginx^)...
+rd /s /q "C:\nginx" >nul 2>&1
+echo   !GREEN![OK]!RESET! C:\nginx removed successfully.
+:skip_nginx_dir_remove
+
+:skip_nginx_uninstall
 
 :: Delete CA/Server keys and folder
 if exist "!CA_KEY!" del "!CA_KEY!"
@@ -1400,6 +1573,7 @@ exit /b 0
 :resolve_ssl_port
 set "P=%~1"
 set /a SSL_P=%P%+!PORT_OFFSET!
+if "!PROFILE!"=="nginx_gateway" if !PORT_OFFSET! equ 0 if !P! equ 80 set SSL_P=443
 if !SSL_P! gtr 65535 set /a SSL_P=%P%-!PORT_OFFSET!
 
 :res_loop
@@ -1567,7 +1741,7 @@ if "!ADJUST_INPUT!"=="" (
     call :sanitize_proxyports
     exit /b 0
 )
-for /f "tokens=1* %%A in ("!ADJUST_INPUT!") do (
+for /f "tokens=1*" %%A in ("!ADJUST_INPUT!") do (
     set "TOKEN=%%A"
     set "ADJUST_INPUT=%%B"
 )

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AnyCert – HTTPS Gateway</title>
 <meta name="description" content="AnyCert one-click HTTPS reverse proxy and self-signed CA management server landing page.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2306b6d4'/%3E%3Cstop offset='100%25' stop-color='%233b82f6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='%230d1117'/%3E%3Cpath d='M32 10 L50 18 V32 C50 43 42 51 32 55 C22 51 14 43 14 32 V18 Z' fill='none' stroke='url(%23g)' stroke-width='3.5' stroke-linejoin='round'/%3E%3Crect x='25' y='30' width='14' height='11' rx='2.5' fill='%23fbbf24'/%3E%3Cpath d='M28 30 V25 C28 22.8 29.8 21 32 21 C34.2 21 36 22.8 36 25 V30' fill='none' stroke='%23fbbf24' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -71,23 +72,55 @@
     background: rgba(63,185,80,0.12); color: var(--green);
     border: 1px solid rgba(63,185,80,0.25); margin-left: 6px; vertical-align: middle;
   }
+  .badge-detected {
+    background: rgba(57,208,216,0.18); color: var(--cyan);
+    border: 1px solid rgba(57,208,216,0.35);
+    margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+    font-size: .62rem; font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase; letter-spacing: .04em; vertical-align: middle;
+  }
   .ca-link { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); font-size: .8rem; color: var(--text-dim); }
   .ca-link a { color: var(--link); text-decoration: none; font-family: 'JetBrains Mono', monospace; }
   .ca-link a:hover { text-decoration: underline; }
 
-  /* ── Ports Table ── */
-  .ports-wrap { overflow-x: auto; }
-  .ports-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
-  .ports-table th {
-    color: var(--text-dim); text-align: left; padding: 5px 10px;
-    border-bottom: 1px solid var(--border);
-    font-weight: 500; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+  /* ── Ports List ── */
+  .ports-wrap { width: 100%; }
+  .ports-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+  .port-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: border-color .2s;
   }
-  .ports-table td { padding: 8px 10px; border-bottom: 1px solid #1e242c; font-family: 'JetBrains Mono', monospace; font-size: .76rem; }
-  .ports-table tr:last-child td { border-bottom: none; }
-  .ports-table a { color: var(--link); text-decoration: none; }
-  .ports-table a:hover { text-decoration: underline; color: var(--cyan); }
-  .arrow { color: var(--text-muted); }
+  .port-card:hover { border-color: rgba(57,208,216,0.3); }
+  .port-card-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: .75rem; flex-wrap: wrap; gap: 6px;
+  }
+  .port-badge {
+    background: rgba(57,208,216,0.1); color: var(--cyan);
+    border: 1px solid rgba(57,208,216,0.25);
+    padding: 2px 7px; border-radius: 4px; font-weight: 600;
+    font-family: 'JetBrains Mono', monospace; font-size: .73rem;
+  }
+  .backend-tag {
+    font-family: 'JetBrains Mono', monospace; font-size: .75rem;
+    color: var(--text-dim);
+  }
+  .port-urls { display: flex; flex-direction: column; gap: 5px; }
+  .port-url-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: .78rem; font-family: 'JetBrains Mono', monospace;
+    word-break: break-all;
+  }
+  .port-tag {
+    font-size: .62rem; font-weight: 600; padding: 1px 5px; border-radius: 3px;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+    flex-shrink: 0; min-width: 38px; text-align: center;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .port-url-item a { color: var(--link); text-decoration: none; }
+  .port-url-item a:hover { text-decoration: underline; color: var(--cyan); }
   .loading { color: var(--text-dim); font-size: .85rem; padding: 8px 0; }
   .no-ports { color: var(--text-dim); font-size: .85rem; }
 
@@ -108,6 +141,20 @@
   .btn-primary:hover { background: var(--cyan); color: var(--bg); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(57,208,216,0.3); }
   .btn-outline { background: transparent; border-color: var(--border); color: var(--text); }
   .btn-outline:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-glow); }
+  .client-guide {
+    margin-top: 14px; padding-top: 14px; border-top: 1px dashed rgba(227,179,65,0.2);
+    display: flex; flex-direction: column; gap: 7px; text-align: left; font-size: .8rem;
+  }
+  .guide-item { color: var(--text-dim); display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .guide-os { font-weight: 600; color: var(--cyan); min-width: 72px; font-family: 'JetBrains Mono', monospace; font-size: .76rem; flex-shrink: 0; }
+  .guide-item code {
+    background: rgba(255,255,255,0.06); color: var(--text); padding: 1px 6px; border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: .75rem; border: 1px solid rgba(255,255,255,0.08);
+  }
+  .guide-note {
+    margin-top: 6px; padding-top: 8px; border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    font-size: .8rem; color: #fbbf24; line-height: 1.45;
+  }
 
   /* ── GitHub ── */
   .github-section { display: flex; flex-direction: column; align-items: center; gap: 16px; }
@@ -127,23 +174,51 @@
   footer a:hover { color: var(--cyan); }
 
   .divider { width: 100%; max-width: 900px; border: none; border-top: 1px solid var(--border); margin: 0; }
+
+  /* ── Security Status Bar ── */
+  .sec-bar {
+    width: 100%; max-width: 900px; margin-bottom: 24px; padding: 14px 20px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: space-between; transition: all 0.3s ease;
+  }
+  .sec-unsecured { background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.28); }
+  .sec-trusted { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.38); }
+  .sec-secured { background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.38); }
+  .sec-content { display: flex; align-items: center; gap: 14px; width: 100%; flex-wrap: wrap; }
+  .sec-badge { font-size: 1.4rem; line-height: 1; flex-shrink: 0; }
+  .sec-text { flex: 1; min-width: 240px; }
+  .sec-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 2px; }
+  .sec-unsecured .sec-title { color: #fbbf24; }
+  .sec-trusted .sec-title { color: #34d399; }
+  .sec-secured .sec-title { color: #38bdf8; }
+  .sec-desc { font-size: 0.82rem; color: #94a3b8; line-height: 1.45; }
+  .btn-sm { padding: 7px 16px; font-size: 0.82rem; border-radius: 8px; flex-shrink: 0; }
 </style>
 </head>
 <body>
 
-<svg class="banner" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 140" role="img" aria-label="AnyCert">
-  <text font-family="Consolas, Monaco, 'Courier New', monospace" font-size="11.5" font-weight="bold" text-anchor="middle" xml:space="preserve">
-    <tspan x="310" y="25" fill="#fbbf24"> █████╗ ███╗   ██╗██╗   ██╗ ██████╗███████╗██████╗ ████████╗</tspan>
-    <tspan x="310" y="40" fill="#fbbf24">██╔══██╗████╗  ██║╚██╗ ██╔╝██╔════╝██╔════╝██╔══██╗╚══██╔══╝</tspan>
-    <tspan x="310" y="55" fill="#06b6d4">███████║██╔██╗ ██║ ╚████╔╝ ██║     █████╗  ██████╔╝   ██║   </tspan>
-    <tspan x="310" y="70" fill="#06b6d4">██╔══██║██║╚██╗██║  ╚██╔╝  ██║     ██╔══╝  ██╔══██╗   ██║   </tspan>
-    <tspan x="310" y="85" fill="#3b82f6">██║  ██║██║ ╚████║   ██║   ╚██████╗███████╗██║  ██║   ██║   </tspan>
-    <tspan x="310" y="100" fill="#3b82f6">╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝╚══════╝╚═╝  ╚═╝   ╚═╝   </tspan>
-    <tspan x="310" y="120" fill="#06b6d4">anycert (Universal HTTPS Manager)</tspan>
-  </text>
+<svg class="banner" role="img" aria-label="AnyCert" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 135" width="100%" height="100%">
+  <rect width="100%" height="100%" fill="#0d1117" rx="8"/>
+  <g stroke-linecap="square" stroke-linejoin="miter">
+    <rect x="54.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="63.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="72.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="81.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="90.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M104.8,29.0 V19.0 H98.8 M101.6,29.0 V24.0 H98.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="116.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="125.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="134.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M148.8,29.0 V19.0 H142.8 M145.6,29.0 V24.0 H142.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="178.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="186.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M201.6,29.0 V19.0 H195.6 M198.4,29.0 V24.0 H195.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="204.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="213.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M228.0,29.0 V19.0 H222.0 M224.8,29.0 V24.0 H222.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="257.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="266.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M280.8,29.0 V19.0 H274.8 M277.6,29.0 V24.0 H274.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="292.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="301.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="310.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="318.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="327.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="336.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M351.2,29.0 V19.0 H345.2 M348.0,29.0 V24.0 H345.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="354.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="362.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="371.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="380.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="389.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="398.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="406.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M421.6,29.0 V19.0 H415.6 M418.4,29.0 V24.0 H415.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="424.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="433.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="442.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="450.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="459.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="468.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M483.2,29.0 V19.0 H477.2 M480.0,29.0 V24.0 H477.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="494.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="503.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="512.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="521.2" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="530.0" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="538.8" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="547.6" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="556.4" y="15.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M571.2,29.0 V19.0 H565.2 M568.0,29.0 V24.0 H565.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="46.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="54.8" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M66.4,43.0 V33.0 H72.4 M69.6,43.0 V38.0 H72.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M72.4,33.0 H81.2 M72.4,38.0 H81.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M81.2,33.0 H90.0 M81.2,38.0 H90.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="90.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="98.8" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M113.6,43.0 V33.0 H107.6 M110.4,43.0 V38.0 H107.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="116.4" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="125.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="134.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="142.8" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M157.6,43.0 V33.0 H151.6 M154.4,43.0 V38.0 H151.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="178.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="186.8" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M198.4,29.0 V43.0 M201.6,29.0 V43.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M207.2,29.0 V38.0 H213.2 M210.4,29.0 V33.0 H213.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="213.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="222.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M236.8,43.0 V33.0 H230.8 M233.6,43.0 V38.0 H230.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="248.4" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="257.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M268.8,43.0 V33.0 H274.8 M272.0,43.0 V38.0 H274.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M280.8,29.0 V38.0 H274.8 M277.6,29.0 V33.0 H274.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="283.6" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="292.4" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M304.0,43.0 V33.0 H310.0 M307.2,43.0 V38.0 H310.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M310.0,33.0 H318.8 M310.0,38.0 H318.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M318.8,33.0 H327.6 M318.8,38.0 H327.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M327.6,33.0 H336.4 M327.6,38.0 H336.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M336.4,33.0 H345.2 M336.4,38.0 H345.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M351.2,29.0 V38.0 H345.2 M348.0,29.0 V33.0 H345.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="354.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="362.8" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M374.4,43.0 V33.0 H380.4 M377.6,43.0 V38.0 H380.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M380.4,33.0 H389.2 M380.4,38.0 H389.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M389.2,33.0 H398.0 M389.2,38.0 H398.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M398.0,33.0 H406.8 M398.0,38.0 H406.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M406.8,33.0 H415.6 M406.8,38.0 H415.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M421.6,29.0 V38.0 H415.6 M418.4,29.0 V33.0 H415.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="424.4" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="433.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M444.8,43.0 V33.0 H450.8 M448.0,43.0 V38.0 H450.8" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M450.8,33.0 H459.6 M450.8,38.0 H459.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M459.6,33.0 H468.4 M459.6,38.0 H468.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="468.4" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="477.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M492.0,43.0 V33.0 H486.0 M488.8,43.0 V38.0 H486.0" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M497.6,29.0 V38.0 H503.6 M500.8,29.0 V33.0 H503.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M503.6,33.0 H512.4 M503.6,38.0 H512.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M512.4,33.0 H521.2 M512.4,38.0 H521.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="521.2" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><rect x="530.0" y="29.0" width="8.8" height="14.0" fill="#fbbf24" /><path d="M541.6,43.0 V33.0 H547.6 M544.8,43.0 V38.0 H547.6" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M547.6,33.0 H556.4 M547.6,38.0 H556.4" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M556.4,33.0 H565.2 M556.4,38.0 H565.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><path d="M571.2,29.0 V38.0 H565.2 M568.0,29.0 V33.0 H565.2" stroke="#fbbf24" stroke-width="1.8" fill="none" /><rect x="46.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="54.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="63.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="72.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="81.2" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="90.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="98.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M110.4,43.0 V57.0 M113.6,43.0 V57.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="116.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="125.2" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M136.8,57.0 V47.0 H142.8 M140.0,57.0 V52.0 H142.8" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="142.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="151.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M166.4,57.0 V47.0 H160.4 M163.2,57.0 V52.0 H160.4" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="178.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="186.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M198.4,43.0 V57.0 M201.6,43.0 V57.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M216.0,43.0 V52.0 H222.0 M219.2,43.0 V47.0 H222.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="222.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="230.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="239.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="248.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M260.0,57.0 V47.0 H266.0 M263.2,57.0 V52.0 H266.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M272.0,43.0 V52.0 H266.0 M268.8,43.0 V47.0 H266.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="283.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="292.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M304.0,43.0 V57.0 M307.2,43.0 V57.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="354.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="362.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="371.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="380.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="389.2" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M404.0,57.0 V47.0 H398.0 M400.8,57.0 V52.0 H398.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="424.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="433.2" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="442.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="450.8" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="459.6" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="468.4" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M480.0,57.0 V47.0 H486.0 M483.2,57.0 V52.0 H486.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M492.0,43.0 V52.0 H486.0 M488.8,43.0 V47.0 H486.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="521.2" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="530.0" y="43.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M541.6,43.0 V57.0 M544.8,43.0 V57.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="46.0" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="54.8" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M66.4,71.0 V61.0 H72.4 M69.6,71.0 V66.0 H72.4" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M72.4,61.0 H81.2 M72.4,66.0 H81.2" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M81.2,61.0 H90.0 M81.2,66.0 H90.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="90.0" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="98.8" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M110.4,57.0 V71.0 M113.6,57.0 V71.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="116.4" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="125.2" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M136.8,57.0 V71.0 M140.0,57.0 V71.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M145.6,57.0 V66.0 H151.6 M148.8,57.0 V61.0 H151.6" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="151.6" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="160.4" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M175.2,71.0 V61.0 H169.2 M172.0,71.0 V66.0 H169.2" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="178.0" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="186.8" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M198.4,57.0 V71.0 M201.6,57.0 V71.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M224.8,57.0 V66.0 H230.8 M228.0,57.0 V61.0 H230.8" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="230.8" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="239.6" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M251.2,71.0 V61.0 H257.2 M254.4,71.0 V66.0 H257.2" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M263.2,57.0 V66.0 H257.2 M260.0,57.0 V61.0 H257.2" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="283.6" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="292.4" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M304.0,57.0 V71.0 M307.2,57.0 V71.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="354.0" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="362.8" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M374.4,71.0 V61.0 H380.4 M377.6,71.0 V66.0 H380.4" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M380.4,61.0 H389.2 M380.4,66.0 H389.2" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M389.2,61.0 H398.0 M389.2,66.0 H398.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M404.0,57.0 V66.0 H398.0 M400.8,57.0 V61.0 H398.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="424.4" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="433.2" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M444.8,71.0 V61.0 H450.8 M448.0,71.0 V66.0 H450.8" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M450.8,61.0 H459.6 M450.8,66.0 H459.6" stroke="#06b6d4" stroke-width="1.8" fill="none" /><path d="M459.6,61.0 H468.4 M459.6,66.0 H468.4" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="468.4" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="477.2" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M492.0,71.0 V61.0 H486.0 M488.8,71.0 V66.0 H486.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="521.2" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><rect x="530.0" y="57.0" width="8.8" height="14.0" fill="#06b6d4" /><path d="M541.6,57.0 V71.0 M544.8,57.0 V71.0" stroke="#06b6d4" stroke-width="1.8" fill="none" /><rect x="46.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="54.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M66.4,71.0 V85.0 M69.6,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="90.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="98.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M110.4,71.0 V85.0 M113.6,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="116.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="125.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M136.8,71.0 V85.0 M140.0,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M154.4,71.0 V80.0 H160.4 M157.6,71.0 V75.0 H160.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="160.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="169.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="178.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="186.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M198.4,71.0 V85.0 M201.6,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="230.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="239.6" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M251.2,71.0 V85.0 M254.4,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M286.4,71.0 V80.0 H292.4 M289.6,71.0 V75.0 H292.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="292.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="301.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="310.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="318.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="327.6" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="336.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M351.2,85.0 V75.0 H345.2 M348.0,85.0 V80.0 H345.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="354.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="362.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="371.6" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="380.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="389.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="398.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="406.8" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M421.6,85.0 V75.0 H415.6 M418.4,85.0 V80.0 H415.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="424.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="433.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M444.8,71.0 V85.0 M448.0,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="468.4" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="477.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M488.8,71.0 V85.0 M492.0,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><rect x="521.2" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><rect x="530.0" y="71.0" width="8.8" height="14.0" fill="#3b82f6" /><path d="M541.6,71.0 V85.0 M544.8,71.0 V85.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M48.8,85.0 V94.0 H54.8 M52.0,85.0 V89.0 H54.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M54.8,89.0 H63.6 M54.8,94.0 H63.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M69.6,85.0 V94.0 H63.6 M66.4,85.0 V89.0 H63.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M92.8,85.0 V94.0 H98.8 M96.0,85.0 V89.0 H98.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M98.8,89.0 H107.6 M98.8,94.0 H107.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M113.6,85.0 V94.0 H107.6 M110.4,85.0 V89.0 H107.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M119.2,85.0 V94.0 H125.2 M122.4,85.0 V89.0 H125.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M125.2,89.0 H134.0 M125.2,94.0 H134.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M140.0,85.0 V94.0 H134.0 M136.8,85.0 V89.0 H134.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M163.2,85.0 V94.0 H169.2 M166.4,85.0 V89.0 H169.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M169.2,89.0 H178.0 M169.2,94.0 H178.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M178.0,89.0 H186.8 M178.0,94.0 H186.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M186.8,89.0 H195.6 M186.8,94.0 H195.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M201.6,85.0 V94.0 H195.6 M198.4,85.0 V89.0 H195.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M233.6,85.0 V94.0 H239.6 M236.8,85.0 V89.0 H239.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M239.6,89.0 H248.4 M239.6,94.0 H248.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M254.4,85.0 V94.0 H248.4 M251.2,85.0 V89.0 H248.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M295.2,85.0 V94.0 H301.2 M298.4,85.0 V89.0 H301.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M301.2,89.0 H310.0 M301.2,94.0 H310.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M310.0,89.0 H318.8 M310.0,94.0 H318.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M318.8,89.0 H327.6 M318.8,94.0 H327.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M327.6,89.0 H336.4 M327.6,94.0 H336.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M336.4,89.0 H345.2 M336.4,94.0 H345.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M351.2,85.0 V94.0 H345.2 M348.0,85.0 V89.0 H345.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M356.8,85.0 V94.0 H362.8 M360.0,85.0 V89.0 H362.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M362.8,89.0 H371.6 M362.8,94.0 H371.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M371.6,89.0 H380.4 M371.6,94.0 H380.4" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M380.4,89.0 H389.2 M380.4,94.0 H389.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M389.2,89.0 H398.0 M389.2,94.0 H398.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M398.0,89.0 H406.8 M398.0,94.0 H406.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M406.8,89.0 H415.6 M406.8,94.0 H415.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M421.6,85.0 V94.0 H415.6 M418.4,85.0 V89.0 H415.6" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M427.2,85.0 V94.0 H433.2 M430.4,85.0 V89.0 H433.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M433.2,89.0 H442.0 M433.2,94.0 H442.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M448.0,85.0 V94.0 H442.0 M444.8,85.0 V89.0 H442.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M471.2,85.0 V94.0 H477.2 M474.4,85.0 V89.0 H477.2" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M477.2,89.0 H486.0 M477.2,94.0 H486.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M492.0,85.0 V94.0 H486.0 M488.8,85.0 V89.0 H486.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M524.0,85.0 V94.0 H530.0 M527.2,85.0 V89.0 H530.0" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M530.0,89.0 H538.8 M530.0,94.0 H538.8" stroke="#3b82f6" stroke-width="1.8" fill="none" /><path d="M544.8,85.0 V94.0 H538.8 M541.6,85.0 V89.0 H538.8" stroke="#3b82f6" stroke-width="1.8" fill="none" />
+  </g>
+  <text x="310" y="118" fill="#06b6d4" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12" font-weight="600" text-anchor="middle">anycert (Universal HTTPS Manager)</text>
 </svg>
 
 <p class="tagline"><strong>AnyCert</strong> &mdash; One-Click HTTPS Reverse Proxy &amp; Self-Signed CA Management</p>
+
+<!-- Connection Security Status Bar -->
+<div id="sec-status-bar" class="sec-bar sec-unsecured" style="display:none">
+  <div class="sec-content">
+    <div class="sec-badge" id="sec-badge-icon">&#9888;</div>
+    <div class="sec-text">
+      <div class="sec-title" id="sec-title">HTTP Connection (Unencrypted)</div>
+      <div class="sec-desc" id="sec-desc">
+        Plain HTTP always shows "Not Secure" in browsers. Run the client installer below, then test HTTPS!
+      </div>
+    </div>
+    <a id="sec-switch-btn" class="btn btn-sm btn-primary" href="#">&#128274; Test HTTPS</a>
+  </div>
+</div>
 
 <div class="cards">
 
@@ -169,16 +244,7 @@
     </div>
     <div class="ports-wrap">
       <div class="loading" id="ports-loading">Loading proxy configuration&#8230;</div>
-      <table class="ports-table" id="ports-table" style="display:none">
-        <thead>
-          <tr>
-            <th>HTTPS (via FQDN)</th>
-            <th>HTTPS (via IP)</th>
-            <th>Backend</th>
-          </tr>
-        </thead>
-        <tbody id="ports-tbody"></tbody>
-      </table>
+      <div class="ports-list" id="ports-list" style="display:none"></div>
       <p class="no-ports" id="ports-empty" style="display:none">No proxy ports configured.</p>
     </div>
   </div>
@@ -193,15 +259,23 @@
   Your browser doesn't trust this server's self-signed certificate yet.
   Run the AnyCert client script on your machine to automatically install the Root CA and permanently eliminate all HTTPS browser warnings:
   <div class="client-links">
-    <a class="btn btn-primary" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-windows.bat">
+    <a class="btn btn-outline" id="btn-dl-win" href="/anycert/anycert-windows.bat" download="anycert-windows.bat">
       &#11015; Windows (.bat)
     </a>
-    <a class="btn btn-outline" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-linux.sh">
+    <a class="btn btn-outline" id="btn-dl-linux" href="/anycert/anycert-linux.sh" download="anycert-linux.sh">
       &#11015; Linux (.sh)
     </a>
-    <a class="btn btn-outline" href="https://github.com/anomixer/anycert/releases/latest/download/anycert-macos.sh">
+    <a class="btn btn-outline" id="btn-dl-mac" href="/anycert/anycert-macos.sh" download="anycert-macos.sh">
       &#11015; macOS (.sh)
     </a>
+  </div>
+  <div class="client-guide">
+    <div class="guide-item"><span class="guide-os">Windows:</span> Right-click <code id="guide-cmd-win">anycert-windows.bat</code> &rarr; <b>Run as Administrator</b></div>
+    <div class="guide-item"><span class="guide-os">Linux:</span> Open terminal and run <code id="guide-cmd-linux">sudo bash anycert-linux.sh</code></div>
+    <div class="guide-item"><span class="guide-os">macOS:</span> Open terminal and run <code id="guide-cmd-mac">sudo bash anycert-macos.sh</code></div>
+    <div class="guide-note">
+      💡 <b>Tip:</b> After running the script, please <b>completely restart your browser</b> (or open a new Incognito window) to apply the trusted Root CA certificate and enable the 🔒 HTTPS secure connection.
+    </div>
   </div>
 </div>
 
@@ -222,20 +296,64 @@
 
 <script>
 (async () => {
+  function detectOS() {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
+
+    if (platform.includes('mac') || ua.includes('mac os x') || ua.includes('macintosh')) {
+      return 'mac';
+    }
+    if (platform.includes('linux') || ua.includes('linux') || ua.includes('ubuntu') || ua.includes('debian') || ua.includes('fedora') || ua.includes('arch')) {
+      return 'linux';
+    }
+    if (platform.includes('win') || ua.includes('windows')) {
+      return 'win';
+    }
+    return 'win';
+  }
+
+  // Highlight client script button based on detected client OS
+  (() => {
+    const clientOS = detectOS();
+    const btnWin   = document.getElementById('btn-dl-win');
+    const btnLinux = document.getElementById('btn-dl-linux');
+    const btnMac   = document.getElementById('btn-dl-mac');
+
+    if (btnWin && btnLinux && btnMac) {
+      btnWin.className   = 'btn btn-outline';
+      btnLinux.className = 'btn btn-outline';
+      btnMac.className   = 'btn btn-outline';
+
+      if (clientOS === 'mac') {
+        btnMac.className = 'btn btn-primary';
+        btnMac.innerHTML = '&#11015; macOS (.sh) <span class="badge-detected">Detected</span>';
+      } else if (clientOS === 'linux') {
+        btnLinux.className = 'btn btn-primary';
+        btnLinux.innerHTML = '&#11015; Linux (.sh) <span class="badge-detected">Detected</span>';
+      } else {
+        btnWin.className = 'btn btn-primary';
+        btnWin.innerHTML = '&#11015; Windows (.bat) <span class="badge-detected">Detected</span>';
+      }
+    }
+  })();
+
   const PROFILE_NAMES = {
-    proxy:   'Nginx SSL Proxy (Profile 1)',
-    gateway: 'Nginx SSL Gateway (Profile 2)',
-    custom:  'Custom Path (Profile 3)',
-    none:    'Generate Only (Profile 4)',
-    pve:     'Proxmox VE (Profile 5)',
+    proxy:          'Nginx SSL Proxy (Profile 1)',
+    nginx_proxy:    'Nginx SSL Proxy (Profile 1)',
+    gateway:        'Nginx SSL Gateway (Profile 2)',
+    nginx_gateway:  'Nginx SSL Gateway (Profile 2)',
+    custom:         'Custom Path (Profile 3)',
+    none:           'Generate Only (Profile 4)',
+    pve:            'Proxmox VE (Profile 5)',
   };
 
   function parseConf(text) {
     const conf = {};
-    for (const line of text.split('\n')) {
+    for (let line of text.split('\n')) {
+      line = line.trim();
+      if (!line || line.startsWith('#')) continue;
       const m = line.match(/^([A-Z_]+)=(.*)$/);
       if (m) {
-        // Strip surrounding quotes (single or double) written by anycert scripts
         let val = m[2].trim();
         if ((val.startsWith('"') && val.endsWith('"')) ||
             (val.startsWith("'") && val.endsWith("'"))) {
@@ -247,8 +365,15 @@
     return conf;
   }
 
-  function resolveSSLPort(httpPort, offset) {
-    return parseInt(httpPort) + (parseInt(offset) || 10000);
+  function resolveSSLPort(httpPort, offset, profile) {
+    const p = parseInt(httpPort, 10);
+    if (isNaN(p)) return httpPort;
+    const o = (offset !== undefined && offset !== null && offset !== '') ? parseInt(offset, 10) : (profile === 'nginx_gateway' ? 0 : 10000);
+    if (isNaN(o)) return p;
+    if (profile === 'nginx_gateway' && o === 0 && p === 80) return 443;
+    let sslP = p + o;
+    if (sslP > 65535) sslP = p - o;
+    return sslP;
   }
 
   function setText(id, val) {
@@ -258,17 +383,24 @@
 
   try {
     const res = await fetch('/anycert/anycert.conf', { cache: 'no-cache' });
-    if (!res.ok) throw new Error('conf not found');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const conf = parseConf(await res.text());
 
-    const fqdn   = conf.SERVER_FQDN  || location.hostname;
-    const ip     = conf.SERVER_IP    || location.hostname;
-    const profile = conf.PROFILE     || '';
-    const ports  = (conf.PROXY_PORTS || '').trim();
-    const offset = conf.PORT_OFFSET  || '10000';
+    const fqdn    = conf.SERVER_FQDN  || location.hostname;
+    const ip      = conf.SERVER_IP    || location.hostname;
+    const profile = conf.PROFILE      || '';
+    const ports   = (conf.PROXY_PORTS || '').trim();
+    const offset  = (conf.PORT_OFFSET !== undefined && conf.PORT_OFFSET !== null && conf.PORT_OFFSET !== '') ? conf.PORT_OFFSET : (profile === 'nginx_gateway' ? '0' : '10000');
 
     setText('val-fqdn', fqdn);
     setText('val-ip', ip);
+
+    const guideWin = document.getElementById('guide-cmd-win');
+    const guideLinux = document.getElementById('guide-cmd-linux');
+    const guideMac = document.getElementById('guide-cmd-mac');
+    if (guideWin) guideWin.textContent = `anycert-windows.bat -s ${ip}`;
+    if (guideLinux) guideLinux.textContent = `sudo bash anycert-linux.sh -s ${ip}`;
+    if (guideMac) guideMac.textContent = `sudo bash anycert-macos.sh -s ${ip}`;
 
     const profileEl = document.getElementById('val-profile');
     if (profileEl) {
@@ -276,29 +408,104 @@
         ' <span class="badge">active</span>';
     }
 
-    // Build ports table
+    // Security Status & CA Probe
+    const bar = document.getElementById('sec-status-bar');
+    const badgeIcon = document.getElementById('sec-badge-icon');
+    const titleEl = document.getElementById('sec-title');
+    const descEl = document.getElementById('sec-desc');
+    const switchBtn = document.getElementById('sec-switch-btn');
+
+    if (bar) {
+      bar.style.display = 'flex';
+      const isHttps = location.protocol === 'https:';
+      const httpsUrl = `https://${ip}/`;
+
+      if (isHttps) {
+        bar.className = 'sec-bar sec-secured';
+        if (badgeIcon) badgeIcon.innerHTML = '&#128274;';
+        if (titleEl) titleEl.textContent = 'HTTPS Encrypted Connection';
+        if (descEl) descEl.textContent = 'Your browser connection is encrypted. If you have installed the AnyCert Root CA, your browser shows a valid green/gray lock icon!';
+        if (switchBtn) switchBtn.style.display = 'none';
+      } else {
+        // Probe HTTPS (Port 443) in background to test if CA is installed on client device
+        let caTrusted = false;
+        try {
+          const probeRes = await fetch(httpsUrl + 'anycert/anycert.conf', { method: 'GET', mode: 'cors', cache: 'no-cache' });
+          if (probeRes.ok) caTrusted = true;
+        } catch (e) {
+          caTrusted = false;
+        }
+
+        if (caTrusted) {
+          bar.className = 'sec-bar sec-trusted';
+          if (badgeIcon) badgeIcon.innerHTML = '&#10024;';
+          if (titleEl) titleEl.textContent = 'AnyCert Root CA Trusted on your Device!';
+          if (descEl) descEl.textContent = 'Your device has trusted the AnyCert Root CA! Click the button below to switch to Secure HTTPS:';
+          if (switchBtn) {
+            switchBtn.innerHTML = '&#128274; Switch to ' + httpsUrl;
+            switchBtn.href = httpsUrl;
+            switchBtn.style.display = 'inline-block';
+          }
+        } else {
+          bar.className = 'sec-bar sec-unsecured';
+          if (badgeIcon) badgeIcon.innerHTML = '&#9888;';
+          if (titleEl) titleEl.textContent = 'HTTP Connection (Unencrypted)';
+          if (descEl) descEl.textContent = 'Plain HTTP always shows "Not Secure" in browser address bar. Install CA below, then test HTTPS:';
+          if (switchBtn) {
+            switchBtn.innerHTML = '&#128274; Test HTTPS (' + httpsUrl + ')';
+            switchBtn.href = httpsUrl;
+            switchBtn.style.display = 'inline-block';
+          }
+        }
+      }
+    }
+
+    // Build ports list
     document.getElementById('ports-loading').style.display = 'none';
     const portList = ports ? ports.split(/\s+/).filter(Boolean) : [];
 
     if (portList.length === 0) {
       document.getElementById('ports-empty').style.display = '';
     } else {
-      const tbody = document.getElementById('ports-tbody');
+      const listEl = document.getElementById('ports-list');
+      listEl.innerHTML = '';
       for (const entry of portList) {
-        const [rawPort, bip = '127.0.0.1'] = entry.split(':');
-        const sslPort = resolveSSLPort(rawPort, offset);
-        const tr = document.createElement('tr');
-        tr.innerHTML =
-          `<td><a href="https://${fqdn}:${sslPort}" target="_blank">https://${fqdn}:${sslPort}</a></td>` +
-          `<td><a href="https://${ip}:${sslPort}"   target="_blank">https://${ip}:${sslPort}</a></td>` +
-          `<td><span class="arrow">&#8594;</span> http://${bip}:${rawPort}</td>`;
-        tbody.appendChild(tr);
+        const parts = entry.split(':');
+        const rawPort = parts[0];
+        const bip = parts[1] || '127.0.0.1';
+        const sslPort = resolveSSLPort(rawPort, offset, profile);
+
+        const card = document.createElement('div');
+        card.className = 'port-card';
+        card.innerHTML = `
+          <div class="port-card-meta">
+            <span class="port-badge">HTTPS :${sslPort}</span>
+            <span class="backend-tag">&rarr; http://${bip}:${rawPort}</span>
+          </div>
+          <div class="port-urls">
+            <div class="port-url-item">
+              <span class="port-tag">FQDN</span>
+              <a href="https://${fqdn}:${sslPort}" target="_blank">https://${fqdn}:${sslPort}</a>
+            </div>
+            <div class="port-url-item">
+              <span class="port-tag">IP</span>
+              <a href="https://${ip}:${sslPort}" target="_blank">https://${ip}:${sslPort}</a>
+            </div>
+          </div>`;
+        listEl.appendChild(card);
       }
-      document.getElementById('ports-table').style.display = 'table';
+      listEl.style.display = 'flex';
     }
 
-  } catch (_) {
-    document.getElementById('ports-loading').textContent = 'Unable to load proxy configuration.';
+  } catch (err) {
+    const loadingEl = document.getElementById('ports-loading');
+    if (loadingEl) {
+      if (location.protocol === 'file:') {
+        loadingEl.textContent = 'Opened locally (file://). Please access via HTTP (http://<server-ip>/) to load server configuration.';
+      } else {
+        loadingEl.textContent = 'Unable to load proxy configuration: ' + err.message;
+      }
+    }
     setText('val-fqdn', location.hostname);
     document.getElementById('val-profile').innerHTML = 'AnyCert Server <span class="badge">active</span>';
   }

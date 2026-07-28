@@ -1,4 +1,4 @@
-![anycert](pic/banner.svg)
+![anycert](docs/pic/banner.svg)
 
 # anycert — Trusted HTTPS for Local Dev, Private Networks, and Enterprise Self-Hosting
 
@@ -12,21 +12,23 @@ It creates your own local CA, issues trusted HTTPS certificates for localhost an
 
 ## Quick Start
 
-**Server** (generate & deploy certs):
+**Server** (generate & deploy certs + Nginx landing page):
 ```bash
 git clone https://github.com/anomixer/anycert.git
 cd anycert
-sudo bash anycert.sh
+sudo bash anycert.sh  # Windows Server: run anycert.bat as Administrator
 ```
 
-**Each Client** (trust the CA):
-```bash
-# Windows: right-click anycert-windows.bat → Run as Administrator
-# Linux:
-sudo bash anycert-linux.sh
-# macOS:
-sudo bash anycert-macos.sh
-```
+**Each Client** (trust the CA — Option A Recommended):
+- **Option A (Recommended ⭐ Web Browser Setup)**: Open `http://<SERVER_IP>/` in your browser, click the download button on the AnyCert Landing Page to download & run the installer script for your OS!
+- **Option B (CLI)**:
+  ```bash
+  # Windows: right-click anycert-windows.bat → Run as Administrator
+  # Linux:
+  sudo bash anycert-linux.sh
+  # macOS:
+  sudo bash anycert-macos.sh
+  ```
 
 **Done.** Access your server securely via `https://<your-fqdn>:<port>` or `https://<your-ip>:<port>`.
 
@@ -312,45 +314,42 @@ The script will search for OpenSSL (e.g. from Git for Windows), generate the cer
 
 ### Step 2 — On Each Client (Trust the CA)
 
-Run the script matching your client operating system:
+AnyCert provides three flexible client setup options:
 
-#### Windows Client:
-Right-click `anycert-windows.bat` → **Run as Administrator**.
-```cmd
-anycert-windows.bat
-```
+#### 🌟 Option A: Web Browser One-Click Setup (Recommended ⭐)
+1. Open your browser on any client device and navigate to the AnyCert landing page:
+   `http://<SERVER_IP>/` or `https://<SERVER_IP>/` (Served on HTTP Port 80 and standard HTTPS Port 443)
+2. The page features a modern dark-mode interface displaying server info, HTTPS proxy port cards, and a **Dynamic Connection Security Status Bar**.
+3. The page includes **Automatic CA Trust Probing**: On HTTP, it explains why plain HTTP displays "Not Secure" and probes HTTPS. Once the client script installs the CA, switching to `https://<SERVER_IP>/` immediately lights up the **🔒 Secure Lock**!
+4. The page includes **Automatic Client OS Detection**, automatically highlighting the matching download button for your OS (Windows / Linux / macOS) with a cyan **`DETECTED`** badge.
 
-#### Linux Client (Ubuntu / Debian):
-```bash
-sudo bash anycert-linux.sh
-```
+#### ⚡ Option B: Automatic Client Script (CLI / Remote)
+Execute the installer script for your operating system with `-s <SERVER_IP>` for zero-prompt automated setup:
+- **Windows Client**: `anycert-windows.bat -s <SERVER_IP>` (Run as Administrator)
+- **Linux Client (Ubuntu / Debian)**: `sudo bash anycert-linux.sh -s <SERVER_IP>`
+- **macOS Client**: `sudo bash anycert-macos.sh -s <SERVER_IP>`
 
-#### macOS Client:
-```bash
-sudo bash anycert-macos.sh
-```
+#### 🛠️ Option C: Manual Setup
+1. Download the Root CA certificate via HTTP or SCP:
+   - HTTP: `curl -s -L -o anycert-ca.crt http://<SERVER_IP>/anycert/anycert-ca.crt`
+   - SCP:  `scp user@<SERVER_IP>:/etc/anycert/anycert-ca.crt ./anycert-ca.crt`
+2. Add the IP and FQDN entry to your client's `hosts` file (`<SERVER_IP>  <SERVER_FQDN>`).
+3. Import the CA certificate into your system trust store and browser to complete setup.
 
-The client scripts will:
-1. Ask for the Server IP and SSH username.
-2. **Smart Transmission & CA Download**:
-   - **HTTP/HTTPS Curl Download (Priority 1, Password-free)**: If the server uses Nginx Proxy or Gateway mode (Profile 1 or 2), the server Nginx will automatically serve the Root CA and configuration on Port 80. If Port 80 is occupied by another service on the server, anycert will **automatically skip Port 80 binding** to prevent collision. Additionally, download endpoints are also registered inside **each enabled SSL (HTTPS) port**. If Port 80 download fails, the client will automatically probe backup SSL ports (e.g. `13000`, `18080`, `21434`) for **password-free HTTPS curl download**, ensuring seamless and collision-free distribution. *(Note: Profile 3/4 users can manually add a location `/anycert/` block in their own Nginx config to enjoy this.)*
+---
+
+### 💡 Client Automated Script Mechanics:
+1. **Smart Transmission & CA Download**:
+   - **HTTP/HTTPS Curl Download (Priority 1, Password-free)**: During server deployment, Nginx automatically serves the Root CA, configuration, and client scripts locally on Port 80 and all SSL wrapper ports. Client scripts probe HTTP/HTTPS endpoints first for **zero-password, instant distribution**.
    - **SCP Download (Priority 2, SSH-backed)**: If HTTP download fails, the client automatically falls back to SCP.
    - **SMB Fallback (Priority 3, Specifically for Windows Server)**: If both HTTP and SCP fail (e.g. Windows server without SSH active), the client script will automatically fall back to the **Windows SMB (Port 445) channel**.
      - *Linux Client*: Automatically checks and installs `smbclient` if missing, then fetches the certificate directly.
-     - *macOS Client*: Uses the native `mount_smbfs` system command to cleanly mount the `c$` administrative share and fetch the file.
-     - *Smart FQDN Detection*: If SMB connects successfully, it will parse the remote `anycert.conf` directly to extract the FQDN, saving you from entering passwords multiple times or setting up SSH.
-     > [!IMPORTANT]
-     > **Windows SMB UAC Restriction (Access is denied)**
-     > Windows blocks remote non-built-in Administrator accounts (e.g. self-created admin accounts) from accessing administrative shares (like `C$`) remotely.
-     > If you get a "System error 5" or "Access is denied" error during SMB fallback:
-     > 1. Run the client script again and use the built-in **`Administrator`** account (capital A).
-     > 2. Or run this command as Administrator on the Windows server to bypass the restriction (takes effect immediately, no restart required):
-     >    `reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f`
-     > 3. **How to Restore**: To revert this security setting, you can run the following command as Administrator on the server to immediately disable the bypass: `reg delete HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /f`
-   - **Offline / Manual Copy Mode**: If the Windows Server has disabled both SSH and SMB, you can choose `Option 2` (Manual Mode) to manually transfer the `anycert-ca.crt` file using a USB drive, RDP, or other methods. The script will still handle the entire installation process on the client.
-3. Detect the server's FQDN and add a mapping to the local `hosts` file.
-4. Import the CA certificate to the system trust store (Linux version also automatically handles Chrome and Firefox NSS profiles, macOS handles Keychain).
-5. **Print all available HTTPS URLs**: Lists all mapped ports with both FQDN-based and IP-based HTTPS URLs (e.g. `https://mysrv:13000` and `https://192.168.1.100:13000`). This ensures direct access is ready, and provides a quick workaround if your frontend development server (e.g. Vite) blocks hostname access via policies like `allowedHosts`.
+     - *macOS Client*: Uses native `mount_smbfs` to mount the `c$` administrative share and fetch the file.
+     - *Smart FQDN Detection*: Parses remote `anycert.conf` directly to extract the FQDN.
+   - **Offline / Manual Copy Mode**: If both SSH and SMB are disabled, choose Manual Mode to transfer `anycert-ca.crt` via USB drive, RDP, etc. The script will handle system trust and hosts configuration.
+2. **FQDN Auto-Mapping**: Automatically writes the FQDN to the client's `hosts` file.
+3. **System & Browser Trust**: Imports CA certificate into system trust store (Linux handles Chrome/Firefox NSS DB, macOS handles Keychain).
+4. **List Available HTTPS URLs**: Prints both FQDN-based and IP-based HTTPS URLs (e.g. `https://mysrv:13000` and `https://192.168.1.100:13000`).
 
 ---
 
@@ -515,3 +514,10 @@ sudo bash anycert-macos.sh -u
 anycert-windows.bat -u
 ```
 This will display a list of registered servers and allow you to selectively or completely remove the hosts entries and imported CA certificates.
+
+---
+
+## 📜 License
+
+This project is licensed under the **[MIT License](LICENSE)**.  
+Author: **[anomixer](https://github.com/anomixer)**

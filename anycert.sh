@@ -332,6 +332,9 @@ detect_listening_ports() {
 resolve_ssl_port() {
   local P="$1"
   local SSL_P=$((P + PORT_OFFSET))
+  if [[ "$PROFILE" == "nginx_gateway" && $PORT_OFFSET -eq 0 && $P -eq 80 ]]; then
+    SSL_P=443
+  fi
   if [[ $SSL_P -gt 65535 ]]; then
     SSL_P=$((P - PORT_OFFSET))
   fi
@@ -862,6 +865,34 @@ install_cert() {
     fi
     mkdir -p "$(dirname "$NGINX_CONF")"
     
+    # Ensure mime.types exists in Nginx config directory if missing
+    local NGINX_BASE_DIR="/etc/nginx"
+    if $IS_MAC; then
+      NGINX_BASE_DIR="${NGINX_DIR:-/opt/homebrew/etc/nginx}"
+    fi
+    if [[ ! -f "${NGINX_BASE_DIR}/mime.types" && ! -f "/etc/nginx/mime.types" ]]; then
+      mkdir -p "${NGINX_BASE_DIR}" 2>/dev/null || true
+      cat << 'EOF' > "${NGINX_BASE_DIR}/mime.types" 2>/dev/null || true
+types {
+    text/html                             html htm shtml;
+    text/css                              css;
+    text/xml                              xml;
+    image/gif                             gif;
+    image/jpeg                            jpeg jpg;
+    application/javascript                js;
+    application/atom+xml                  atom;
+    application/rss+xml                   rss;
+    text/plain                            txt;
+    image/png                             png;
+    image/svg+xml                         svg svgz;
+    image/webp                            webp;
+    application/json                      json;
+    application/x-x509-ca-cert            der pem crt;
+    application/octet-stream              bin exe dll iso img msi bat sh;
+}
+EOF
+    fi
+    
     # Clean file first
     : > "$NGINX_CONF"
 
@@ -873,19 +904,37 @@ install_cert() {
     done
     NGINX_SERVER_NAMES="${NGINX_SERVER_NAMES} localhost 127.0.0.1"
     
-    # Detect if Port 80 is occupied on the server to prevent Nginx bind failure
+    # Temporarily stop Nginx daemon to check if Port 80 is occupied by ANOTHER service
+    if command -v systemctl &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null; then
+      systemctl stop nginx &>/dev/null || true
+    else
+      pkill -f "nginx: master" &>/dev/null || true
+      $IS_MAC && nginx -s stop &>/dev/null || true
+    fi
+
+    # Detect if Port 80 & 443 are occupied on the server to prevent Nginx bind failure
     local PORT_80_OCCUPIED=false
+    local PORT_443_OCCUPIED=false
     if command -v ss &>/dev/null; then
       if ss -tuln | grep -qE ':(80|0\.0\.0\.0:80|\[::\]:80) '; then
         PORT_80_OCCUPIED=true
+      fi
+      if ss -tuln | grep -qE ':(443|0\.0\.0\.0:443|\[::\]:443) '; then
+        PORT_443_OCCUPIED=true
       fi
     elif command -v netstat &>/dev/null; then
       if netstat -tuln | grep -qE ':(80|0\.0\.0\.0:80|\[::\]:80) '; then
         PORT_80_OCCUPIED=true
       fi
+      if netstat -tuln | grep -qE ':(443|0\.0\.0\.0:443|\[::\]:443) '; then
+        PORT_443_OCCUPIED=true
+      fi
     else
       if lsof -i :80 &>/dev/null; then
         PORT_80_OCCUPIED=true
+      fi
+      if lsof -i :443 &>/dev/null; then
+        PORT_443_OCCUPIED=true
       fi
     fi
 
@@ -896,7 +945,7 @@ install_cert() {
     fi
     mkdir -p "$HTML_ROOT"
 
-    # Copy the landing page from repo's public/ directory (JS fetches /anycert/anycert.conf at runtime)
+    # Copy the landing page and client scripts from repo's public/ and root directory
     local SCRIPT_DIR
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [[ -f "${SCRIPT_DIR}/public/index.html" ]]; then
@@ -906,10 +955,18 @@ install_cert() {
       warn "public/index.html not found in ${SCRIPT_DIR}/public/ — skipping landing page."
     fi
 
+    # Copy client installation scripts for local HTTP distribution
+    for CS in anycert-windows.bat anycert-linux.sh anycert-macos.sh; do
+      if [[ -f "${SCRIPT_DIR}/${CS}" ]]; then
+        cp "${SCRIPT_DIR}/${CS}" "${CONF_DIR}/${CS}" 2>/dev/null || true
+        cp "${SCRIPT_DIR}/${CS}" "${HTML_ROOT}/${CS}" 2>/dev/null || true
+      fi
+    done
+
     if [ "$PORT_80_OCCUPIED" = "false" ]; then
         # Write Standard HTTP 80 server block for zero-password client distribution
         cat << EOF >> "$NGINX_CONF"
-# Standard HTTP Server for Client Certificate Distribution
+# Standard HTTP Server for Client Certificate & Script Distribution
 server {
     listen       80;
     server_name  ${NGINX_SERVER_NAMES};
@@ -924,6 +981,21 @@ server {
         default_type text/plain;
     }
 
+    location /anycert/anycert-windows.bat {
+        alias /etc/anycert/anycert-windows.bat;
+        default_type application/octet-stream;
+    }
+
+    location /anycert/anycert-linux.sh {
+        alias /etc/anycert/anycert-linux.sh;
+        default_type text/plain;
+    }
+
+    location /anycert/anycert-macos.sh {
+        alias /etc/anycert/anycert-macos.sh;
+        default_type text/plain;
+    }
+
     location / {
         root   ${HTML_ROOT};
         index  index.html index.htm;
@@ -932,6 +1004,62 @@ server {
 EOF
     else
         echo "  [INFO] Port 80 is occupied by another service. Skipping Nginx 80 HTTP server block to avoid collision."
+    fi
+
+    if [ "$PORT_443_OCCUPIED" = "false" ]; then
+        # Write Standard HTTPS 443 SSL server block for Landing Page
+        cat << EOF >> "$NGINX_CONF"
+
+# Standard HTTPS 443 SSL Server for Landing Page
+server {
+    listen       443 ssl;
+    server_name  ${NGINX_SERVER_NAMES};
+
+    ssl_certificate      /etc/anycert/anycert-server.crt;
+    ssl_certificate_key  /etc/anycert/anycert-server.key;
+
+    error_page 497 https://\$http_host\$request_uri;
+
+    location /anycert/anycert-ca.crt {
+        alias /etc/anycert/anycert-ca.crt;
+        default_type application/x-x509-ca-cert;
+    }
+
+    location /anycert/anycert.conf {
+        alias /etc/anycert/anycert.conf;
+        default_type text/plain;
+    }
+
+    location /anycert/anycert-windows.bat {
+        alias /etc/anycert/anycert-windows.bat;
+        default_type application/octet-stream;
+    }
+
+    location /anycert/anycert-linux.sh {
+        alias /etc/anycert/anycert-linux.sh;
+        default_type text/plain;
+    }
+
+    location /anycert/anycert-macos.sh {
+        alias /etc/anycert/anycert-macos.sh;
+        default_type text/plain;
+    }
+
+    location /anycert/index.html {
+        alias ${HTML_ROOT}/index.html;
+    }
+
+    location /anycert/ {
+        alias ${HTML_ROOT}/;
+        index index.html;
+    }
+
+    location / {
+        root   ${HTML_ROOT};
+        index  index.html index.htm;
+    }
+}
+EOF
     fi
 
     # Write server blocks
@@ -966,6 +1094,30 @@ server {
     location /anycert/anycert.conf {
         alias /etc/anycert/anycert.conf;
         default_type text/plain;
+    }
+
+    location /anycert/anycert-windows.bat {
+        alias /etc/anycert/anycert-windows.bat;
+        default_type application/octet-stream;
+    }
+
+    location /anycert/anycert-linux.sh {
+        alias /etc/anycert/anycert-linux.sh;
+        default_type text/plain;
+    }
+
+    location /anycert/anycert-macos.sh {
+        alias /etc/anycert/anycert-macos.sh;
+        default_type text/plain;
+    }
+
+    location /anycert/index.html {
+        alias ${HTML_ROOT}/index.html;
+    }
+
+    location /anycert/ {
+        alias ${HTML_ROOT}/;
+        index index.html;
     }
 
     location / {
@@ -1011,11 +1163,7 @@ EOF
       else
         info "Starting Nginx daemon..."
         if $IS_MAC; then
-          if [[ -n "$BREW_CMD" ]]; then
-            sudo "$BREW_CMD" services start nginx
-          else
-            nginx
-          fi
+          nginx
         else
           systemctl start nginx
           systemctl enable nginx || true
@@ -1188,24 +1336,33 @@ show_summary() {
   echo ""
   echo -e "${BOLD}--------------------------------------------${RESET}"
   echo -e "${BOLD}[ Client Device Setup Steps ]${RESET}"
-  echo -e "${BOLD}Option A: Manual${RESET}"
   echo ""
-  echo -e "  1. Download the Root CA certificate on each client device:"
-  echo -e "     ${YELLOW}scp -o StrictHostKeyChecking=no root@${SERVER_IP}:${CA_CRT} ./anycert-ca.crt${RESET}"
-  echo -e "     (Even if connecting via SSH with a non-root user, the CA file is readable [644] and downloadable)"
+  echo -e "${BOLD}Option A: Web Browser One-Click Setup ${GREEN}[Recommended ⭐]${RESET}"
   echo ""
-  echo -e "  2. Add the following entry to the client's hosts file:"
+  echo -e "  1. Open browser on client device and navigate to:"
+  echo -e "     ${GREEN}http://${SERVER_IP}/${RESET}"
+  echo ""
+  echo -e "  2. Download the client installer script directly from the landing page and follow Option B."
+  echo ""
+  echo -e "${BOLD}Option B: Automatic Client Script (CLI / Remote)${RESET}"
+  echo ""
+  echo -e "  Execute the client script directly on the client machine:"
+  echo -e "     - Windows: ${CYAN}anycert-windows.bat -s ${SERVER_IP}${RESET}  (as Administrator)"
+  echo -e "     - Linux:   ${CYAN}sudo bash anycert-linux.sh -s ${SERVER_IP}${RESET}"
+  echo -e "     - macOS:   ${CYAN}sudo bash anycert-macos.sh -s ${SERVER_IP}${RESET}"
+  echo -e "     (Zero prompt: automatically fetches CA and configures system trust & hosts)"
+  echo ""
+  echo -e "${BOLD}Option C: Manual Setup${RESET}"
+  echo ""
+  echo -e "  1. Download Root CA via HTTP or SCP:"
+  echo -e "     HTTP: ${GREEN}curl -s -L -o anycert-ca.crt http://${SERVER_IP}/anycert/anycert-ca.crt${RESET}"
+  echo -e "     SCP:  ${YELLOW}scp -o StrictHostKeyChecking=no root@${SERVER_IP}:${CA_CRT} ./anycert-ca.crt${RESET}"
+  echo ""
+  echo -e "  2. Add the following entry to client's hosts file:"
   echo -e "     ${YELLOW}${SERVER_IP}  ${SERVER_FQDN}${RESET}"
   echo ""
-  echo -e "  3. Connect to the server from your browser using the FQDN:"
-  echo -e "     ${GREEN}https://${SERVER_FQDN}:<port>${RESET}"
-  echo ""
-  echo -e "${BOLD}Option B: Automatic${RESET}"
-  echo ""
-  echo -e "  👉 Recommended: Execute the corresponding client script directly on the client machine:"
-  echo -e "     - Windows: ${BOLD}anycert-windows.bat${RESET}"
-  echo -e "     - Linux:   ${BOLD}sudo bash anycert-linux.sh${RESET}"
-  echo -e "     - macOS:   ${BOLD}sudo bash anycert-macos.sh${RESET}"
+  echo -e "  3. Access your HTTPS services using FQDN or IP:"
+  echo -e "     ${GREEN}https://${SERVER_FQDN}:<port>${RESET}  or  ${GREEN}https://${SERVER_IP}:<port>${RESET}"
   if [[ "$IS_WSL" == "true" ]]; then
     local host_ip="0.0.0.0"
     local primary_ip

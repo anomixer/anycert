@@ -204,6 +204,62 @@
 
 ---
 
+### 階段 17：Nginx 原生首頁 (Landing Page) 與伺服器本地 Zero-Password 用戶端腳本分發
+- **問題痛點與架構解耦**：
+  - Nginx 部署完成後，預設首頁為原始 `Welcome to nginx!`，缺乏視覺吸引力與功能提示。
+  - 原先用戶端下載腳本連結指向 GitHub Releases，缺乏離線/內網環境韌性，且需要連外網路。
+  - 舊版 Client Setup 摘要步驟以 SCP/SSH 密碼手動下載為主，未能突出 Zero-Password HTTP 首頁下載優勢。
+- **現代化 Nginx Landing Page (`public/index.html` & `public/banner.svg`)**：
+  - 設計高顏值深色主題首頁，內建 AnyCert 多色 ASCII Banner SVG 霓虹光暈動畫、Server Info 卡片與 HTTPS Proxy Ports 反代埠卡片。
+  - **動態 Conf 渲染**：利用純 JavaScript 在瀏覽器端發送 AJAX 請求 `fetch('/anycert/anycert.conf')`，即時解析 `PROXY_PORTS`、`PORT_OFFSET`、`SERVER_FQDN`、`SERVER_IP` 與 `PROFILE`，完全免去伺服器端樣板字串替換。
+  - **響應式卡片列表 (Port Cards)**：捨棄傳統 3 欄 Table 佈局，改用垂直彈性卡片顯示各個代理埠的 FQDN 連結、IP 連結與 Backend Target，徹底消除水平滾動條 (Horizontal Scrollbar)。
+- **伺服器本地端 Zero-Password 用戶端腳本分發**：
+  - 伺服器端腳本（`anycert.sh` / `anycert.bat`）部署時，會自動將三端用戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`）複製至憑證目錄與 Nginx `html` 根目錄中。
+  - Nginx 在 Port 80 與所有 SSL Wrapper 埠自動注入 `/anycert/anycert-*.bat/sh` location 路由，點擊首頁下載按鈕即可直接從本地伺服器下載安裝腳本，達成 100% 離線無密碼部署。
+- **客戶端安裝摘要三選項重構 (Option A / B / C)**：
+  - 重構 `anycert.sh` 與 `anycert.bat` 的完成摘要，將 **Option A: Web Browser One-Click Setup [Recommended ⭐]** 置頂，引導使用者開啟 `http://<SERVER_IP>/` 下載安裝；`Option B` 為命令列/遠端腳本執行；`Option C` 為純手動模式。
+- **用戶端作業系統智慧自動偵測 (Client OS Auto-Detection)**：
+  - 於 `index.html` 整合 `detectOS()` 函式，利用 `navigator.userAgentData.platform` 與 `User-Agent` 即時判定連線裝置作業系統（Windows / Linux / macOS）。
+  - 自動將符合當前裝置作業系統的下載按鈕設定為滿色亮青色高亮 (Primary Button)，並動態加上 `DETECTED` 徽章，大幅提升使用者體驗。
+- **修復傳入 `-s <server-ip>` 時仍跳出 [1-2] 下載選單問題與選項名稱更新**：
+  - *問題*：當傳入 `-s <server-ip>` 參數時，先前版本仍會彈出已註冊伺服器選單與 `Please choose how to download/import [1-2]` 詢問提示，且選項名稱仍顯示為舊版的 `via SSH`。
+  - *修正*：帶入 `-s <server-ip>` 時自動跳過一切前置選單並自動預設 `IMPORT_MODE=1`；同步將選項 1 的文字更新為 `Automatic Download (HTTP / SSH / SMB) [Default]`，精準反映當前多元傳輸機制。
+- **新增 Port 443 標準 HTTPS 導覽頁支援與動態連線安全狀態條 (Security Status Bar & CA Trust Probe)**：
+  - *問題*：使用者在尚未安裝 CA 憑證前連線 `http://<SERVER_IP>/` 顯示「不安全」；但在執行完安裝腳本後重新重新整理 `http://<SERVER_IP>/`，瀏覽器因仍處於明文 HTTP 80 埠，網址列依然顯示「不安全」，容易誤導使用者以為憑證安裝失敗。
+  - *修正*：
+    1. 伺服器端（`anycert.bat` / `anycert.sh`）自動偵測並開啟 Port 443 標準 HTTPS 導覽頁區塊，使 `https://<SERVER_IP>/`（無需輸入任何連接埠）亦可直接存取 AnyCert 導覽頁。
+    2. `public/index.html` 新增 **動態連線安全狀態條 (`.sec-bar`)** 與背景 CA 探測機制。若為 HTTP 連線且背景探測發現 CA 已成功信任，會即時顯示亮眼綠色徽章 `✨ AnyCert Root CA Trusted on your Device!` 並附上 `🔒 Switch to https://<SERVER_IP>/` 一鍵切換按鈕，使用者點擊即可看見亮起的安全綠鎖頭 🔒，徹底解決誤導問題。
+    3. `public/index.html` 在三平台執行指令下方顯眼標示「請關閉並重新開啟瀏覽器（或開新無痕視窗）以載入已信任的 Root CA 憑證並順利顯示 🔒 HTTPS 安全鎖頭」溫馨提示。
+- **優化 Nginx 啟用時自動跳過冗餘的 Windows OpenSSH Server 安裝詢問**：
+  - *問題*：在舊版中，`anycert.bat` 完成部署後會檢查並詢問使用者「是否安裝與啟用 OpenSSH Server」。但在當前架構下，Nginx 已經成功運作並經由 HTTP (Port 80) / HTTPS (Port 443 / SSL 埠) 提供零密碼自動化憑證與腳本下載，繼續詢問安裝 OpenSSH 已無必要且增加互動成本。
+  - *修正*：當使用 Nginx 模式（Profile 1, 2, 3）部署完成時，`anycert.bat` 自動跳過 OpenSSH 安裝詢問，實現更流暢、更少打擾的一鍵部署體驗。
+- **新增 AnyCert 品牌向量 Favicon (Shield + Lock SVG Icon)**：
+  - 設計並新增 `public/favicon.svg` 向量圖示（包含深色背景、Cyan/Blue 漸層安全盾牌與金色 SSL 金屬鎖頭）。
+  - 於 `public/index.html` 內嵌 inline Data URI Favicon，使瀏覽器分頁標籤在零額外 HTTP 請求下秒級顯示專屬 AnyCert 鎖頭分頁圖示。
+
+### 階段 18：官方 GitHub Pages 展示網站 (`docs/index.html`) 與中英雙語切換 Engine
+- **打造專業 GitHub Pages 官方展示網站**：
+  - 於 `docs/index.html` 建立專為 GitHub Pages 發布的單頁式（Single-Page Application）官方導覽展示網站。
+  - **視覺美學與 Logo 呼吸燈動畫**：採用 AnyCert 經典深海黑 (#0d1117) 與青藍發光色調，並為 AnyCert 向量 Banner SVG 加入 `@keyframes pulse-glow` 霓虹呼吸燈光暈動畫。
+  - **中英雙語無縫切換 Engine**：頂部導覽列提供 `繁體中文` <-> `English` 一鍵切換按鈕，免重載頁面並自動記憶偏好設定 (`localStorage`)。
+  - **完整的章節架構**：
+    1. *Hero 主視覺區塊*：霓虹 Logo、雙語動態標題、一鍵快速開始與 GitHub Star 按鈕。
+    2. *痛點與架構對比 (Before vs. After)*：明文 HTTP 不安全警告 vs. AnyCert 10 年內網信任 CA 綠色鎖頭卡片對比。
+    3. *五大 Profile 展示區*：單機反代、SSL Gateway、Custom Path、僅簽發、PVE 節點支援。
+    4. *互動式快速入門 (Quick Start)*：分頁切換 Server 端與 Client 端安裝指令，附帶一鍵複製剪貼簿按鈕。
+    5. *畫面展示畫廊 (Screenshots & Lightbox)*：整合 `pic/` 的終端機與 Nginx 網頁截圖，支援點擊彈窗全螢幕放大檢視 (Lightbox Modal)。
+    6. *常見問題 (FAQ Accordion)*：折疊式卡片解答連線、無網域名稱、Tailscale IP SAN 與反安裝說明。
+
+---
+
+### 階段 20：修正 macOS 下 Homebrew Nginx launchctl bootstrap 提權啟動崩潰 Bug
+- **問題痛點**：在 macOS 上以 `sudo bash anycert.sh` 執行腳本時，當啟動 Nginx daemon 時，腳本先前的邏輯會呼叫 `sudo "$BREW_CMD" services start nginx`。在 macOS (Sonoma/Sequoia) 上，Homebrew 嚴格禁止在 root/sudo 權限下呼叫 `brew services` 註冊 LaunchDaemons，會噴出 `Warning: nginx must be run as non-root to start at user login!` 並被 macOS 的 `launchctl` 拒絕，拋出致命的 `Bootstrap failed: 5: Input/output error` 報錯中斷 exit。
+- **修正**：
+  - **繞過 Homebrew Services，直呼原生 `nginx` 守護行程**：在 macOS 平台上，啟動 Nginx 時不再呼叫 `brew services start nginx`，而是直接呼叫全域可執行的 `nginx` 原生命令啟動 master process。
+  - **解決權限與 Launchctl 碰撞**：呼叫 `nginx` 原生指令能在擁有 `root` 權限下直接綁定 `80` 與 `443` 等特權 Ports，並完全避開 macOS `launchctl` 服務管理器被阻擋的權限衝突，達成 100% 平滑且穩定的 Nginx 啟動與 `nginx -s reload`。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本
