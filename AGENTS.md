@@ -260,6 +260,31 @@
 
 ---
 
+### 階段 21：官方展示網站 Lightbox 互動縮放、常駐控制列、相容性矩陣對齊與 SVG 架構圖色塊分組
+- **Lightbox 全螢幕大圖視窗與 150% 互動 Zoom In / Out**：
+  - 將燈箱預設圖檔尺寸上限擴展至 `95vw` / `90vh`。
+  - 支援點擊圖檔或按鈕自由切換 **150% 實體大圖縮放 (`width: 140vw`)** 與 fit-to-screen 原尺寸；採用 `margin: auto` 彈性滾動佈局，徹底解決 Flexbox 垂直置中導致大圖頂部被截斷無法向上捲動的 CSS 經典 Bug。
+- **燈箱控制列 (Lightbox Toolbar) Viewport 常駐釘選 (Always On Top)**：
+  - 將控制列 `#lightbox-toolbar` 提升為 `body` 直屬頂層元素，徹底解耦 `backdrop-filter` 建立的包含塊限制。
+  - 設定最高的 `z-index: 99999` 與 `position: fixed`，使 `🔍 放大 150%` 與 `✕ 關閉` 按鈕在使用者滾動平移 (Pan) 圖檔時 100% 常駐螢幕右上角。
+- **相容性矩陣 (Compatibility Matrix) X/Y 軸對調與全功能對齊**：
+  - 將「用戶端信任導入相容性 (Client Side)」表格的 X/Y 軸對調，讓平台標題 (Windows, Linux, macOS) 成為頂部欄位，與「伺服器端部署相容性」達到 100% 的結構對稱與閱讀邏輯統一。
+  - 於伺服器端相容性表格底部同步補齊「一鍵反安裝 (`-u`) 支援」列。
+- **SVG 架構流程圖實體伺服器色塊外框重構**：
+  - *Profile 1 (Single-Host)*：將 Local Nginx Proxy 與 Open-WebUI / Ollama 統一包裹於 **`🖥️ Server A (Single Host)`** 虛線色塊外框內。
+  - *Profile 2 (SSL Gateway)*：獨立劃分 **`🌐 Gateway (VM / LXC)`** 網關框、**`🖥️ Server A (NAS)`**、**`🖥️ Server B (172.16.21.51)`** 共享框（包含 Home Assistant 與修正後的 OctoPrint `:5000 ➔ :15000`）與 **`🖥️ Server C (Dev)`** 框。
+
+---
+
+### 階段 22：新增單機本地受信 Q&A 問答至全站文檔與展示頁
+- **需求**：解答使用者關於單一一台電腦是否可做本地受信的疑慮。
+- **更新內容**：
+  - **`docs/index.html` (官方展示頁)**：在 FAQ 折疊卡片中新增 Q5「可以在單一一台電腦上完成本地受信設定嗎？」，支援中英雙語切換。
+  - **`README_tw.md` (繁體中文)**：新增「常見問題與問答 (Q&A)」章節，說明跑 Server 腳本並將 IP 指定為 `127.0.0.1` 後，Windows 平台可自動詢問匯入信任區免跑 Client 腳本；Linux/macOS/WSL 平台則在同一台電腦跑對應 Client 腳本即可。
+  - **`README.md` (English)**：同步新增 Frequently Asked Questions (FAQ) 章節，為英文使用者提供對等說明的問答卡片。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本

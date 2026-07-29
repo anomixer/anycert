@@ -495,6 +495,13 @@ WSL 2 supports sharing the Windows host IP directly, making WSL services listen 
 
 ---
 
+## Frequently Asked Questions (FAQ)
+
+**Q: Can I set up local certificate trust on a single computer?**  
+**A:** Yes. First run the server script (`anycert.bat` or `anycert.sh`) and specify `127.0.0.1` as the server IP. On Windows, the installer will ask if you want to import the CA into the local trust store (selecting yes skips the need to run the client script). On Linux, macOS, or WSL, simply run the corresponding client script once on the same computer.
+
+---
+
 ## Uninstall
 
 ### Server-side

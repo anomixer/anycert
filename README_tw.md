@@ -494,6 +494,13 @@ netsh advfirewall firewall add rule name="WSL HTTPS Ports" dir=in action=allow p
 
 ---
 
+## 常見問題與問答 (Q&A)
+
+**Q：一台電腦做本地受信是否可以？**  
+**A：** 可以。請先執行伺服器端腳本（`anycert.bat` 或 `anycert.sh`），將 IP 指定為本機（`127.0.0.1`）。若在 Windows 平台上，腳本最後會詢問是否匯入本機信任區（選擇是即可，無需再跑用戶端腳本）；若是 Linux / macOS / WSL 平台，請在同一台電腦執行一次對應平台的用戶端腳本即可。
+
+---
+
 ## 解除安裝
 
 ### 伺服器端
