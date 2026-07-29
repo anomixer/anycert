@@ -272,7 +272,7 @@
   - 於伺服器端相容性表格底部同步補齊「一鍵反安裝 (`-u`) 支援」列。
 - **SVG 架構流程圖實體伺服器色塊外框重構**：
   - *Profile 1 (Single-Host)*：將 Local Nginx Proxy 與 Open-WebUI / Ollama 統一包裹於 **`🖥️ Server A (Single Host)`** 虛線色塊外框內。
-  - *Profile 2 (SSL Gateway)*：獨立劃分 **`🌐 Gateway (VM / LXC)`** 網關框、**`🖥️ Server A (NAS)`**、**`🖥️ Server B (172.16.21.51)`** 共享框（包含 Home Assistant 與修正後的 OctoPrint `:5000 ➔ :15000`）與 **`🖥️ Server C (Dev)`** 框。
+  - *Profile 2 (SSL Gateway)*：獨立劃分 **`🌐 Gateway (VM / LXC)`** 網關框、**`🖥️ Server A (NAS)`**、**`🖥️ Server B (Apps)`** 共享框（包含 Home Assistant 與修正後的 OctoPrint `172.16.21.51:15000 ➔ :15000`）與 **`🖥️ Server C (Dev)`** 框。
 
 ---
 
@@ -282,6 +282,46 @@
   - **`docs/index.html` (官方展示頁)**：在 FAQ 折疊卡片中新增 Q5「可以在單一一台電腦上完成本地受信設定嗎？」，支援中英雙語切換。
   - **`README_tw.md` (繁體中文)**：新增「常見問題與問答 (Q&A)」章節，說明跑 Server 腳本並將 IP 指定為 `127.0.0.1` 後，Windows 平台可自動詢問匯入信任區免跑 Client 腳本；Linux/macOS/WSL 平台則在同一台電腦跑對應 Client 腳本即可。
   - **`README.md` (English)**：同步新增 Frequently Asked Questions (FAQ) 章節，為英文使用者提供對等說明的問答卡片。
+
+---
+
+### 階段 23：新增雙網卡 / 虛擬 IP (IP Alias) 單機融合模式 (Fusion Mode) FAQ 與避雷指南
+- **需求**：解答使用者是否能透過雙網卡或虛擬 IP (IP Alias) 在單機上實現 Profile 2 的 1:1 Port 轉發（`https://IP-B:3000` 🔒 &rarr; `http://IP-A:3000` 🔓），並完整提供架構運作原理與關鍵避雷指南（如 `0.0.0.0` 綁定衝突、雲端 IP 申購與重啟持久化）。
+- **更新內容**：
+  - **`docs/index.html` (官方展示頁)**：在 FAQ 卡片擴充 Q6，以清單與雙語標籤完整說明融合模式 (Fusion Mode) 架構路由與三大避雷重點。
+  - **`README_tw.md` (繁體中文)**：在 Q&A 章節同步補齊豐富的單機 1:1 Port 轉發架構與避雷說明。
+  - **`README.md` (English)**：在 FAQ 章節同步新增對等的 Fusion Mode Architecture & Pitfalls 問答。
+- **💡 融合模式不自動化腳本化之戰略考量 (Strategic Decision & Rationale)**：
+  - **決策**：融合模式**僅作為 FAQ 進階指引，不寫入 `anycert` 的自動化 CLI 腳本選單**。
+  - **考量一（跨平台 IP 設置與持久化天坑）**：Linux 發行版網路設定檔格式天差地別（Ubuntu Netplan, Debian interfaces, RedHat NetworkManager, Windows netsh），自動化配發 IP Alias 且確保重啟不失聯維護成本極高。
+  - **考量二（`0.0.0.0` 監聽衝突無法自動修復）**：多數 Docker 容器或 Web 服務預設綁定 `0.0.0.0:PORT`，即使腳本建立 IP-B，Nginx 啟動時仍會因 `EADDRINUSE` 崩潰，腳本無法自動改寫使用者本機所有第三方程式與容器的連接埠綁定。
+  - **結論**：進階玩家參照 FAQ 手動配置即可，普通使用者維持 Profile 1 (+10000 偏移) 或 Profile 2 (獨立 VM/Gateway)，確保 `anycert` 腳本的極簡與百分之百穩定。
+
+---
+
+### 階段 24：新增軟路由 (OpenWrt / pfSense / iStoreOS) 競品對比 FAQ
+- **需求**：解答使用者「為何不直接用軟路由內建 ACME 簽發憑證即可，而需要使用 AnyCert？」的疑慮。
+- **更新內容**：
+  - **`docs/index.html` (官方展示頁)**：在 FAQ 卡片新增 Q7 說明 AnyCert 與軟路由在「離線/零 Domain 依賴」、「跨平台端到端自動信任庫導入」與「零網路拓撲變更」的三大差異。
+  - **`README_tw.md` (繁體中文)**：在 Q&A 章節同步補齊軟路由對比問答。
+  - **`README.md` (English)**：在 FAQ 章節同步新增對等的 Soft Router (OpenWrt/pfSense) Comparison 問答。
+
+
+
+### 階段 25：新增行動裝置 (iOS / Android) 憑證導入與 IP SAN 直連 FAQ、首頁 Mobile 指南與 SVG 標籤優化
+- **需求**：解答使用者「手機和平板 (iOS / Android) 是否可以使用 AnyCert 簽發的憑證」與具體匯入步驟，優化 Nginx 伺服器首頁空白處，並精簡 Profile 2 SVG 流程圖標籤。
+- **更新內容**：
+  - **`docs/index.html` (官方展示頁)**：在 FAQ 卡片新增 Q8 說明 IP SAN 讓手機免改 hosts 直連存取（`https://<SERVER_IP>:xxxx`）的特性，提供 iOS「完全信任」與 Android 導入步驟；並將 Profile 2 SVG 流程圖中的標籤精簡更新為 `Server B (Apps)`。
+  - **`public/index.html` (Nginx 伺服器首頁)**：在 Server Info 卡片 `Root CA` 連結下方空白處新增「📱 Mobile CA Setup (iOS / Android)」引導步驟，利於手機用戶直連下載與啟用信任。
+  - **`README_tw.md` (繁體中文)**：在 Q&A 章節同步補齊 iOS / Android 手機連線 IP vs FQDN 說明與導入憑證指南。
+  - **`README.md` (English)**：在 FAQ 章節同步新增 Mobile Devices (iOS / Android) IP vs FQDN Setup 指南。
+
+---
+
+### 階段 26：Nginx 伺服器預設首頁 (`public/index.html`) 全站雙語 i18n 切換支援
+- **需求**：對齊官方展示頁，讓內網 Nginx SSL 伺服器落地的 landing page (`public/index.html`) 也支援瀏覽器語系自動偵測與「🌐 繁體中文 / English」手動一鍵切換。
+- **更新內容**：
+  - **`public/index.html`**：加入右上角 Floating 語言切換按鈕 (`#lang-toggle-btn`)，將所有文字標籤、卡片標題、連線安全狀態條 (.sec-bar)、用戶端安裝指引與 Mobile 指南包裹為雙語標籤，並透過 JavaScript 結合 `localStorage` 與 `navigator.language` 實現無縫切換。
 
 ---
 

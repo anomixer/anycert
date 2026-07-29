@@ -499,6 +499,41 @@ netsh advfirewall firewall add rule name="WSL HTTPS Ports" dir=in action=allow p
 **Q：一台電腦做本地受信是否可以？**  
 **A：** 可以。請先執行伺服器端腳本（`anycert.bat` 或 `anycert.sh`），將 IP 指定為本機（`127.0.0.1`）。若在 Windows 平台上，腳本最後會詢問是否匯入本機信任區（選擇是即可，無需再跑用戶端腳本）；若是 Linux / macOS / WSL 平台，請在同一台電腦執行一次對應平台的用戶端腳本即可。
 
+**Q：若單機有雙網卡（或虛擬 IP / IP Alias），能做 Profile 2 的 1:1 同 Port 轉發嗎？有哪些避雷重點？**  
+**A：** **可以！這稱為「單機融合模式 (Fusion Mode)」。** 透過在同一台主機的網卡上綁定第二個 IP（Secondary IP / IP Alias），無需額外部署 VM/LXC 網關，即可在單一機器實現 1:1 同 Port 的 HTTPS 反向代理：
+
+- **🔹 架構與運作原理**：
+  1. **網路設定**：實體網卡設定主 IP **`IP-A`**（如 `192.168.1.100`），並新增第二個虛擬 IP **`IP-B`**（如 `192.168.1.200`）。
+  2. **服務監聽**：讓後端 Web 服務僅綁定監聽 `IP-A:port`（或 `127.0.0.1:port`），而 Nginx 則開啟 SSL 綁定監聽 `IP-B:port`。
+  3. **流量路由**：存取 `https://IP-B:3000` 🔒 &rarr; Nginx 解密 &rarr; 轉發至 `http://127.0.0.1:3000` 🔓，實現 1:1 Port 轉發不衝突。
+
+- **🚨 關鍵避雷重點 (Pitfalls to Avoid)**：
+  1. **`0.0.0.0` 綁定衝突 (EADDRINUSE)**：許多後端服務與 Docker 預設會監聽 `0.0.0.0:PORT`（綁定所有 IP 介面）。如果後端佔用了 `0.0.0.0:3000`，Nginx 在 `IP-B:3000` 啟動時會因埠號衝突而崩潰。**解決方式**：必須修改後端服務設定或 Docker 埠號映射，明確指定僅監聽 `127.0.0.1` 或 `IP-A`。
+  2. **IP 資源與雲端環境限制**：內網環境需確保 `IP-B` 在路由器中已設為靜態或保留；若在雲端主機 (AWS/GCP/Azure)，需透過雲端面板申購配發 Secondary Private IP。
+  3. **重啟持久化**：透過系統指令（如 Linux `ip addr add` 或 Windows `netsh`）手動新增的 IP Alias，在重啟後會消失，需寫入系統網路設定檔（如 netplan / Windows Registry）維護持久化。
+
+**Q：如果內網已經有軟路由（如 OpenWrt / pfSense / iStoreOS）可以簽發憑證，為什麼還需要使用 AnyCert？**  
+**A：** **這兩者的適用情境與自動化維度完全不同！** 軟路由內建的 ACME 套件通常僅解決「公網 Domain 的憑證簽發」，而 AnyCert 提供了完整的**「離線零 Domain 簽發 + Nginx 自動反代 + 全平台客戶端一鍵自動信任」**端到端解決方案：
+
+- **100% 離線 & 零 Domain 依賴**：軟路由 ACME 必須申請公網網域名稱 (Domain) 並設定 Cloudflare 等外網 DNS API 驗證；AnyCert 可在無網際網路的純內網、IP (如 `192.168.x.x`) 或 Tailscale 虛擬網段直接簽發。
+- **跨平台客戶端一鍵自動信任**：軟路由完全無法幫客戶端電腦自動匯入憑證；AnyCert 提供 `anycert-windows.bat` / `anycert-linux.sh` / `anycert-macos.sh` 一鍵腳本，自動遠端下載 CA、自動導入系統與 Chrome 信任庫並配置 hosts。
+- **零網路拓撲變更**：無需購買或更換軟路由硬體，在任何既有主機（Windows / Linux / macOS / PVE）上執行即可即刻生效！
+
+**Q：行動裝置（iOS / Android 手機和平板）可以使用嗎？該如何匯入憑證？**  
+**A：** **完全可以！** 行動裝置只需下載並導入 `anycert-ca.crt` 即可亮起安全鎖頭 🔒！
+
+- 💡 **手機連線關鍵說明（IP 網址 vs FQDN 域名）**：
+  - **預設推薦使用 IP 網址存取 (`https://<SERVER_IP>:xxxx`)**：由於手機無 Root 權限無法修訂本機 `hosts` 檔，AnyCert 簽發時已將伺服器實體 IP 與 Tailscale IP 寫入憑證 SAN 欄位中，因此**無需修改 hosts，手機直接打 IP 網址即可安全連線！**
+  - **若欲在手機使用 FQDN 域名 (`https://<FQDN>:xxxx`)**：需在內網路由器或 DNS 伺服器（如 AdGuard Home、Pi-hole、OpenWrt）自訂 Local DNS A 紀錄指到伺服器 IP。
+- **📱 iOS / iPadOS 安裝步驟**：
+  1. 用 Safari 開啟 `http://<SERVER_IP>/` 下載 `anycert-ca.crt`。
+  2. 前往 iOS **「設定」&rarr;「已下載描述檔」&rarr; 點擊「安裝」**。
+  3. **關鍵步驟**：前往 iOS **「設定」&rarr;「一般」&rarr;「關於本機」&rarr; 底部「憑證信任設定」&rarr; 開啟 AnyCert Root CA 的「完全信任」**開關。
+- **🤖 Android 安裝步驟**：
+  1. 用 Chrome 開啟 `http://<SERVER_IP>/` 下載 `anycert-ca.crt`。
+  2. 前往 Android **「設定」&rarr;「安全性與隱私權」&rarr;「更多安全性設定」&rarr;「加密與憑證」&rarr;「安裝憑證」&rarr; 選擇「CA 憑證」**。
+  3. 點擊「仍要安裝」並選取剛下載的 `anycert-ca.crt` 檔案完成匯入。
+
 ---
 
 ## 解除安裝

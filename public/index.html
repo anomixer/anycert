@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,16 +18,31 @@
     --link: #58a6ff;
   }
   html { scroll-behavior: smooth; }
+  html[lang="zh-TW"] .en { display: none !important; }
+  html[lang="en"] .zh { display: none !important; }
+
   body {
     min-height: 100vh;
     background: var(--bg);
     background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(57,208,216,0.07), transparent);
     color: var(--text);
-    font-family: 'Inter', sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     display: flex; flex-direction: column; align-items: center;
     padding: 56px 24px 80px;
     gap: 44px;
+    position: relative;
   }
+
+  /* ── Language Switcher Button ── */
+  .lang-btn {
+    position: absolute; top: 16px; right: 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 14px; border-radius: 20px;
+    font-size: .8rem; font-weight: 500; cursor: pointer;
+    transition: all .2s; display: flex; align-items: center; gap: 6px;
+    z-index: 10;
+  }
+  .lang-btn:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-glow); }
 
   /* ── Banner SVG ── */
   .banner {
@@ -60,7 +75,7 @@
   }
   .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
   .card-icon { font-size: 1rem; }
-  .card h3 { font-size: .7rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); }
+  .card h3 { font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--cyan); }
 
   /* ── Info Rows ── */
   .info-row { display: flex; gap: 12px; align-items: baseline; margin-bottom: 10px; font-size: .88rem; }
@@ -196,6 +211,12 @@
 </head>
 <body>
 
+<!-- Language Switcher Button -->
+<button id="lang-toggle-btn" class="lang-btn" title="Switch Language / 切換語言">
+  <span class="zh">🌐 English</span>
+  <span class="en">🌐 繁體中文</span>
+</button>
+
 <svg class="banner" role="img" aria-label="AnyCert" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 135" width="100%" height="100%">
   <rect width="100%" height="100%" fill="#0d1117" rx="8"/>
   <g stroke-linecap="square" stroke-linejoin="miter">
@@ -204,16 +225,23 @@
   <text x="310" y="118" fill="#06b6d4" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12" font-weight="600" text-anchor="middle">anycert (Universal HTTPS Manager)</text>
 </svg>
 
-<p class="tagline"><strong>AnyCert</strong> &mdash; One-Click HTTPS Reverse Proxy &amp; Self-Signed CA Management</p>
+<p class="tagline">
+  <span class="zh"><strong>AnyCert</strong> &mdash; 一鍵 Nginx HTTPS 反向代理與自簽 Root CA 管理系統</span>
+  <span class="en"><strong>AnyCert</strong> &mdash; One-Click HTTPS Reverse Proxy &amp; Self-Signed CA Management</span>
+</p>
 
 <!-- Connection Security Status Bar -->
 <div id="sec-status-bar" class="sec-bar sec-unsecured" style="display:none">
   <div class="sec-content">
     <div class="sec-badge" id="sec-badge-icon">&#9888;</div>
     <div class="sec-text">
-      <div class="sec-title" id="sec-title">HTTP Connection (Unencrypted)</div>
+      <div class="sec-title" id="sec-title">
+        <span class="zh">HTTP 連線（未加密）</span>
+        <span class="en">HTTP Connection (Unencrypted)</span>
+      </div>
       <div class="sec-desc" id="sec-desc">
-        Plain HTTP always shows "Not Secure" in browsers. Run the client installer below, then test HTTPS!
+        <span class="zh">明文 HTTP 連線於瀏覽器網址列一律會顯示「不安全」提示。請執行下方用戶端安裝腳本後測試 HTTPS！</span>
+        <span class="en">Plain HTTP always shows "Not Secure" in browser address bar. Install CA below, then test HTTPS!</span>
       </div>
     </div>
     <a id="sec-switch-btn" class="btn btn-sm btn-primary" href="#">&#128274; Test HTTPS</a>
@@ -226,7 +254,10 @@
   <div class="card">
     <div class="card-header">
       <span class="card-icon">&#9881;</span>
-      <h3>Server Info</h3>
+      <h3>
+        <span class="zh">伺服器資訊</span>
+        <span class="en">Server Info</span>
+      </h3>
     </div>
     <div class="info-row"><span class="label">Host</span><span class="val" id="val-fqdn">&#8212;</span></div>
     <div class="info-row"><span class="label">IP</span><span class="val" id="val-ip">&#8212;</span></div>
@@ -234,18 +265,43 @@
     <div class="ca-link">
       Root CA: <a href="/anycert/anycert-ca.crt" title="Download Root CA Certificate">/anycert/anycert-ca.crt</a>
     </div>
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); font-size: .78rem; line-height: 1.5; color: var(--text-dim);">
+      <div style="font-weight: 600; color: var(--cyan); margin-bottom: 4px;">
+        <span class="zh">📱 行動裝置 CA 安裝 (iOS / Android)：</span>
+        <span class="en">📱 Mobile CA Setup (iOS / Android):</span>
+      </div>
+      <span class="zh">
+        點擊上方 <b><a href="/anycert/anycert-ca.crt" style="color:var(--link); text-decoration:none;">anycert-ca.crt</a></b> 下載並匯入：<br>
+        • <b>iOS:</b> 設定 &rarr; 已下載描述檔 &rarr; 安裝，再至 <b>一般 &rarr; 關於本機 &rarr; 憑證信任設定 &rarr; 開啟完全信任</b>。<br>
+        • <b>Android:</b> 設定 &rarr; 安全性 &rarr; 加密與憑證 &rarr; 安裝 CA 憑證。
+      </span>
+      <span class="en">
+        Tap <b><a href="/anycert/anycert-ca.crt" style="color:var(--link); text-decoration:none;">anycert-ca.crt</a></b> above to download &amp; install:<br>
+        • <b>iOS:</b> Settings &rarr; Profile Downloaded &rarr; Install, then <b>General &rarr; About &rarr; Certificate Trust Settings &rarr; Enable Full Trust</b>.<br>
+        • <b>Android:</b> Settings &rarr; Security &rarr; Encryption &amp; Credentials &rarr; Install CA Certificate.
+      </span>
+    </div>
   </div>
 
   <!-- Ports Card -->
   <div class="card">
     <div class="card-header">
       <span class="card-icon">&#128274;</span>
-      <h3>HTTPS Proxy Ports</h3>
+      <h3>
+        <span class="zh">HTTPS 代理連接埠</span>
+        <span class="en">HTTPS Proxy Ports</span>
+      </h3>
     </div>
     <div class="ports-wrap">
-      <div class="loading" id="ports-loading">Loading proxy configuration&#8230;</div>
+      <div class="loading" id="ports-loading">
+        <span class="zh">正在載入代理設定檔&#8230;</span>
+        <span class="en">Loading proxy configuration&#8230;</span>
+      </div>
       <div class="ports-list" id="ports-list" style="display:none"></div>
-      <p class="no-ports" id="ports-empty" style="display:none">No proxy ports configured.</p>
+      <p class="no-ports" id="ports-empty" style="display:none">
+        <span class="zh">未偵測到監聽中之反向代理 Ports。</span>
+        <span class="en">No proxy ports configured.</span>
+      </p>
     </div>
   </div>
 
@@ -255,9 +311,13 @@
 
 <!-- Security Notice -->
 <div class="notice">
-  <div class="notice-title">&#9888; Seeing a security warning in your browser?</div>
-  Your browser doesn't trust this server's self-signed certificate yet.
-  Run the AnyCert client script on your machine to automatically install the Root CA and permanently eliminate all HTTPS browser warnings:
+  <div class="notice-title">
+    <span class="zh">&#9888; 瀏覽器出現不安全連線警告？</span>
+    <span class="en">&#9888; Seeing a security warning in your browser?</span>
+  </div>
+  <span class="zh">這是因為客戶端電腦尚未信任此伺服器的自簽 Root CA 憑證。請執行下方的 AnyCert 用戶端一鍵腳本，自動匯入 CA 憑證並徹底消除所有 HTTPS 警告訊息：</span>
+  <span class="en">Your browser doesn't trust this server's self-signed certificate yet. Run the AnyCert client script on your machine to automatically install the Root CA and permanently eliminate all HTTPS browser warnings:</span>
+  
   <div class="client-links">
     <a class="btn btn-outline" id="btn-dl-win" href="/anycert/anycert-windows.bat" download="anycert-windows.bat">
       &#11015; Windows (.bat)
@@ -270,11 +330,24 @@
     </a>
   </div>
   <div class="client-guide">
-    <div class="guide-item"><span class="guide-os">Windows:</span> Right-click <code id="guide-cmd-win">anycert-windows.bat</code> &rarr; <b>Run as Administrator</b></div>
-    <div class="guide-item"><span class="guide-os">Linux:</span> Open terminal and run <code id="guide-cmd-linux">sudo bash anycert-linux.sh</code></div>
-    <div class="guide-item"><span class="guide-os">macOS:</span> Open terminal and run <code id="guide-cmd-mac">sudo bash anycert-macos.sh</code></div>
+    <div class="guide-item">
+      <span class="guide-os">Windows:</span>
+      <span class="zh">右鍵點選 <code id="guide-cmd-win">anycert-windows.bat</code> &rarr; <b>以系統管理員身分執行</b></span>
+      <span class="en">Right-click <code id="guide-cmd-win">anycert-windows.bat</code> &rarr; <b>Run as Administrator</b></span>
+    </div>
+    <div class="guide-item">
+      <span class="guide-os">Linux:</span>
+      <span class="zh">開啟終端機並執行 <code id="guide-cmd-linux">sudo bash anycert-linux.sh</code></span>
+      <span class="en">Open terminal and run <code id="guide-cmd-linux">sudo bash anycert-linux.sh</code></span>
+    </div>
+    <div class="guide-item">
+      <span class="guide-os">macOS:</span>
+      <span class="zh">開啟終端機並執行 <code id="guide-cmd-mac">sudo bash anycert-macos.sh</code></span>
+      <span class="en">Open terminal and run <code id="guide-cmd-mac">sudo bash anycert-macos.sh</code></span>
+    </div>
     <div class="guide-note">
-      💡 <b>Tip:</b> After running the script, please <b>completely restart your browser</b> (or open a new Incognito window) to apply the trusted Root CA certificate and enable the 🔒 HTTPS secure connection.
+      <span class="zh">💡 <b>提示：</b> 執行完腳本後，請<b>完全關閉並重開瀏覽器</b>（或開啟無痕視窗），即可套用受信任的 Root CA 憑證並開啟 🔒 HTTPS 安全連線。</span>
+      <span class="en">💡 <b>Tip:</b> After running the script, please <b>completely restart your browser</b> (or open a new Incognito window) to apply the trusted Root CA certificate and enable the 🔒 HTTPS secure connection.</span>
     </div>
   </div>
 </div>
@@ -296,6 +369,24 @@
 
 <script>
 (async () => {
+  let currentLang = localStorage.getItem('anycert_lang') || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-TW' : 'en');
+  let updateSecBarText = null;
+
+  function applyLang(lang) {
+    currentLang = lang;
+    localStorage.setItem('anycert_lang', lang);
+    document.documentElement.setAttribute('lang', lang);
+    const btn = document.getElementById('lang-toggle-btn');
+    if (btn) {
+      btn.innerHTML = lang === 'zh-TW' ? '🌐 English' : '🌐 繁體中文';
+    }
+    if (typeof updateSecBarText === 'function') updateSecBarText();
+  }
+
+  document.getElementById('lang-toggle-btn')?.addEventListener('click', () => {
+    applyLang(currentLang === 'zh-TW' ? 'en' : 'zh-TW');
+  });
+
   function detectOS() {
     const ua = (navigator.userAgent || '').toLowerCase();
     const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
@@ -420,44 +511,75 @@
       const isHttps = location.protocol === 'https:';
       const httpsUrl = `https://${ip}/`;
 
-      if (isHttps) {
-        bar.className = 'sec-bar sec-secured';
-        if (badgeIcon) badgeIcon.innerHTML = '&#128274;';
-        if (titleEl) titleEl.textContent = 'HTTPS Encrypted Connection';
-        if (descEl) descEl.textContent = 'Your browser connection is encrypted. If you have installed the AnyCert Root CA, your browser shows a valid green/gray lock icon!';
-        if (switchBtn) switchBtn.style.display = 'none';
-      } else {
-        // Probe HTTPS (Port 443) in background to test if CA is installed on client device
-        let caTrusted = false;
+      let caTrusted = false;
+      if (!isHttps) {
         try {
           const probeRes = await fetch(httpsUrl + 'anycert/anycert.conf', { method: 'GET', mode: 'cors', cache: 'no-cache' });
           if (probeRes.ok) caTrusted = true;
         } catch (e) {
           caTrusted = false;
         }
+      }
 
-        if (caTrusted) {
+      updateSecBarText = () => {
+        if (isHttps) {
+          bar.className = 'sec-bar sec-secured';
+          if (badgeIcon) badgeIcon.innerHTML = '&#128274;';
+          if (titleEl) {
+            titleEl.innerHTML = currentLang === 'zh-TW'
+              ? 'HTTPS 加密連線已建立'
+              : 'HTTPS Encrypted Connection';
+          }
+          if (descEl) {
+            descEl.innerHTML = currentLang === 'zh-TW'
+              ? '您的瀏覽器與本伺服器連線已通過加密。若您已匯入 AnyCert Root CA，網址列將亮起綠色/灰色安全鎖頭！'
+              : 'Your browser connection is encrypted. If you have installed the AnyCert Root CA, your browser shows a valid green/gray lock icon!';
+          }
+          if (switchBtn) switchBtn.style.display = 'none';
+        } else if (caTrusted) {
           bar.className = 'sec-bar sec-trusted';
           if (badgeIcon) badgeIcon.innerHTML = '&#10024;';
-          if (titleEl) titleEl.textContent = 'AnyCert Root CA Trusted on your Device!';
-          if (descEl) descEl.textContent = 'Your device has trusted the AnyCert Root CA! Click the button below to switch to Secure HTTPS:';
+          if (titleEl) {
+            titleEl.innerHTML = currentLang === 'zh-TW'
+              ? '您的裝置已信任 AnyCert Root CA 憑證！'
+              : 'AnyCert Root CA Trusted on your Device!';
+          }
+          if (descEl) {
+            descEl.innerHTML = currentLang === 'zh-TW'
+              ? '偵測到您的裝置已成功信任 AnyCert 憑證！點擊下方按鈕即可一鍵切換至安全 HTTPS 連線：'
+              : 'Your device has trusted the AnyCert Root CA! Click the button below to switch to Secure HTTPS:';
+          }
           if (switchBtn) {
-            switchBtn.innerHTML = '&#128274; Switch to ' + httpsUrl;
+            switchBtn.innerHTML = currentLang === 'zh-TW'
+              ? '&#128274; 切換至 ' + httpsUrl
+              : '&#128274; Switch to ' + httpsUrl;
             switchBtn.href = httpsUrl;
             switchBtn.style.display = 'inline-block';
           }
         } else {
           bar.className = 'sec-bar sec-unsecured';
           if (badgeIcon) badgeIcon.innerHTML = '&#9888;';
-          if (titleEl) titleEl.textContent = 'HTTP Connection (Unencrypted)';
-          if (descEl) descEl.textContent = 'Plain HTTP always shows "Not Secure" in browser address bar. Install CA below, then test HTTPS:';
+          if (titleEl) {
+            titleEl.innerHTML = currentLang === 'zh-TW'
+              ? 'HTTP 連線（未加密）'
+              : 'HTTP Connection (Unencrypted)';
+          }
+          if (descEl) {
+            descEl.innerHTML = currentLang === 'zh-TW'
+              ? '明文 HTTP 連線於瀏覽器網址列一律會顯示「不安全」提示。請執行下方用戶端安裝腳本後測試 HTTPS！'
+              : 'Plain HTTP always shows "Not Secure" in browser address bar. Install CA below, then test HTTPS:';
+          }
           if (switchBtn) {
-            switchBtn.innerHTML = '&#128274; Test HTTPS (' + httpsUrl + ')';
+            switchBtn.innerHTML = currentLang === 'zh-TW'
+              ? '&#128274; 測試 HTTPS (' + httpsUrl + ')'
+              : '&#128274; Test HTTPS (' + httpsUrl + ')';
             switchBtn.href = httpsUrl;
             switchBtn.style.display = 'inline-block';
           }
         }
-      }
+      };
+
+      updateSecBarText();
     }
 
     // Build ports list
@@ -509,6 +631,8 @@
     setText('val-fqdn', location.hostname);
     document.getElementById('val-profile').innerHTML = 'AnyCert Server <span class="badge">active</span>';
   }
+
+  applyLang(currentLang);
 })();
 </script>
 </body>

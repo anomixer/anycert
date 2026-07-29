@@ -1961,11 +1961,11 @@
                 </g>
               </g>
 
-              <!-- Server B (172.16.21.51) Box -->
+              <!-- Server B (Apps) Box -->
               <g transform="translate(545, 110)">
                 <rect x="0" y="0" width="335" height="160" rx="10" fill="rgba(168, 85, 247, 0.03)" stroke="rgba(168, 85, 247, 0.35)" stroke-width="1.5" stroke-dasharray="5,4" />
-                <rect x="15" y="-10" width="185" height="20" rx="4" fill="#a855f7" />
-                <text x="107" y="4" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="800">🖥️ Server B (172.16.21.51)</text>
+                <rect x="15" y="-10" width="140" height="20" rx="4" fill="#a855f7" />
+                <text x="85" y="4" text-anchor="middle" fill="#ffffff" font-size="10.5" font-weight="800">🖥️ Server B (Apps)</text>
                 
                 <g transform="translate(10, 18)">
                   <rect x="0" y="0" width="315" height="58" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1" />
@@ -1976,7 +1976,7 @@
                 <g transform="translate(10, 88)">
                   <rect x="0" y="0" width="315" height="58" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1" />
                   <text x="12" y="24" fill="#fbbf24" font-weight="700" font-size="11.5">🖨️ OctoPrint 3D Printer PC</text>
-                  <text x="12" y="44" fill="#8b949e" font-size="10.5" font-family="monospace">http://172.16.21.51:5000 ➔ :15000 🔒</text>
+                  <text x="12" y="44" fill="#8b949e" font-size="10.5" font-family="monospace">http://172.16.21.51:15000 ➔ :15000 🔒</text>
                 </g>
               </g>
 
@@ -2003,12 +2003,12 @@
             </div>
             <div class="example-box">
               <span class="zh">執行 command: 選擇 <code>[2] Nginx SSL Gateway</code> ➔ 輸入遠端 IP 與 Port 清單:
-                <code>172.16.21.50:5000 172.16.21.51:8123 172.16.21.51:5000:15000 172.16.21.53:8080</code></span>
+                <code>172.16.21.50:5000 172.16.21.51:8123 172.16.21.51:15000 172.16.21.53:8080</code></span>
               <span class="en">Run command: Select <code>[2] Nginx SSL Gateway</code> ➔ Enter IP & port list:
-                <code>172.16.21.50:5000 172.16.21.51:8123 172.16.21.51:5000:15000 172.16.21.53:8080</code></span><br><br>
+                <code>172.16.21.50:5000 172.16.21.51:8123 172.16.21.51:15000 172.16.21.53:8080</code></span><br><br>
               <code>172.16.21.50:5000 (Synology NAS on Server A)</code> ➔ <b>https://gateway.demo.local:5000 🔒</b><br>
               <code>172.16.21.51:8123 (Home Assistant on Server B)</code> ➔ <b>https://gateway.demo.local:8123 🔒</b><br>
-              <code>172.16.21.51:5000 (3D Printer PC on Server B)</code> ➔ <b>https://gateway.demo.local:15000 🔒</b><br>
+              <code>172.16.21.51:15000 (3D Printer PC on Server B)</code> ➔ <b>https://gateway.demo.local:15000 🔒</b><br>
               <code>172.16.21.53:8080 (Dev Server on Server C)</code> ➔ <b>https://gateway.demo.local:8080 🔒</b>
             </div>
           </div>
@@ -2800,6 +2800,125 @@
           <div class="faq-answer">
             <span class="zh"><b>完全可以！</b> 請先執行伺服器端腳本（<code>anycert.bat</code> 或 <code>anycert.sh</code>），將 IP 設定為本機（<code>127.0.0.1</code>）。若在 Windows 平台上，腳本最後會詢問是否匯入本機信任區（確認後即無需再執行用戶端腳本）；若是 Linux / macOS / WSL 平台，請在同一台電腦執行一次對應平台的用戶端腳本即可。</span>
             <span class="en"><b>Yes!</b> First run the server script (<code>anycert.bat</code> or <code>anycert.sh</code>) and specify <code>127.0.0.1</code> as the IP. On Windows, the installer will ask if you want to import the CA into the local trust store (skipping the need for a client script). On Linux, macOS, or WSL, simply run the corresponding client script once on the same computer.</span>
+          </div>
+        </div>
+
+        <!-- Q6 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            <span class="zh">如果有雙網卡（或虛擬 IP / IP Alias），可以在單機做到 Profile 2 的「1:1 同 Port 轉發」嗎？有哪些避雷重點？</span>
+            <span class="en">Can I achieve 1:1 port forwarding (like Profile 2) on a single host with dual NICs or IP Aliases? What are the key pitfalls?</span>
+            <span class="faq-icon">▾</span>
+          </div>
+          <div class="faq-answer">
+            <span class="zh">
+              <b>完全可以！這稱為「單機融合模式 (Fusion Mode)」</b>。透過在同一台主機的網卡上綁定第二個 IP（Secondary IP / IP Alias），即可在單一機器上實現 1:1 同 Port 的 HTTPS 反向代理，無需額外部署 VM 或 LXC 網關！<br><br>
+              <b>🔹 架構與運作原理：</b>
+              <ol style="margin: 6px 0 12px 20px; padding: 0;">
+                <li><b>網路卡設定：</b> 網卡綁定主 IP <b><code>IP-A</code></b>（例如 <code>192.168.1.100</code>），並新增第二個虛擬 IP <b><code>IP-B</code></b>（例如 <code>192.168.1.200</code>）。</li>
+                <li><b>服務監聽與轉發：</b> 後端 Web 服務僅綁定監聽 <code>IP-A:port</code>（或 <code>127.0.0.1:port</code>），而 Nginx 開啟 SSL 並僅監聽 <code>IP-B:port</code>。</li>
+                <li><b>流量路由：</b> 存取 <b><code>https://IP-B:3000/</code> 🔒 &rarr; Nginx 解密 &rarr; 轉發至 <code>http://127.0.0.1:3000/</code> 🔓</b>，成功達成 1:1 Port 不衝突。</li>
+              </ol>
+              <b>🚨 關鍵避雷重點 (Pitfalls to Avoid)：</b>
+              <ul style="margin: 6px 0 0 20px; padding: 0;">
+                <li><b><code>0.0.0.0</code> 綁定衝突 (EADDRINUSE)：</b> 許多後端服務與 Docker 容器預設會監聽 <code>0.0.0.0:PORT</code>（綁定所有 IP 介面）。如果後端佔用了 <code>0.0.0.0:3000</code>，Nginx 在 <code>IP-B:3000</code> 啟動時會因埠號衝突而直接崩潰。<b>解決方式：</b> 必須修改後端服務設定或 Docker 埠號映射，明確指定僅監聽 <code>127.0.0.1</code> 或 <code>IP-A</code>。</li>
+                <li><b>IP 資源與雲端環境限制：</b> 內網環境需確保 <code>IP-B</code> 在路由器中已設為靜態或保留；若在雲端主機 (AWS/GCP/Azure)，需透過雲端面板申購配發 Secondary Private IP。</li>
+                <li><b>重啟持久化：</b> 透過系統指令（如 Linux <code>ip addr add</code> 或 Windows <code>netsh</code>）手動新增的 IP Alias，在重啟後會消失，需寫入系統網路設定檔（如 netplan / Windows Registry）維護持久化。</li>
+              </ul>
+            </span>
+            <span class="en">
+              <b>Yes! This is known as Single-Host Fusion Mode.</b> By binding a secondary IP address (IP Alias / Secondary IP) to your host's network card, you can achieve 1:1 port HTTPS reverse proxying on a single machine without deploying extra VMs or LXC containers!<br><br>
+              <b>🔹 Architecture & Workflow:</b>
+              <ol style="margin: 6px 0 12px 20px; padding: 0;">
+                <li><b>Network Setup:</b> Assign primary <b><code>IP-A</code></b> (e.g. <code>192.168.1.100</code>) and add a secondary virtual <b><code>IP-B</code></b> (e.g. <code>192.168.1.200</code>) to the network interface.</li>
+                <li><b>Service Listening:</b> Configure backend web services to bind strictly on <code>IP-A:port</code> (or <code>127.0.0.1:port</code>), while Nginx SSL listens on <code>IP-B:port</code>.</li>
+                <li><b>Traffic Routing:</b> Requests to <b><code>https://IP-B:3000/</code> 🔒 &rarr; decrypted by Nginx &rarr; forwarded to <code>http://127.0.0.1:3000/</code> 🔓</b> with zero port conflicts.</li>
+              </ol>
+              <b>🚨 Critical Pitfalls to Avoid:</b>
+              <ul style="margin: 6px 0 0 20px; padding: 0;">
+                <li><b><code>0.0.0.0</code> Binding Collision (EADDRINUSE):</b> Many backend applications and Docker containers default to listening on <code>0.0.0.0:PORT</code> (all interfaces). If a backend service claims <code>0.0.0.0:3000</code>, Nginx will fail to start on <code>IP-B:3000</code> due to port collision. <b>Solution:</b> You must update the backend config or Docker port mapping to bind explicitly to <code>127.0.0.1</code> or <code>IP-A</code>.</li>
+                <li><b>IP Allocation & Cloud Restrictions:</b> On LANs, ensure <code>IP-B</code> is reserved/static on your router. On cloud providers (AWS/GCP/Azure), assign a Secondary Private IP via the cloud management console.</li>
+                <li><b>Reboot Persistence:</b> Secondary IPs added via temporary CLI tools (e.g. Linux <code>ip addr add</code> or Windows <code>netsh</code>) will disappear upon reboot. Save them to system network configs (e.g. netplan, systemd-networkd, or Windows Registry) to survive reboots.</li>
+              </ul>
+            </span>
+          </div>
+        </div>
+
+        <!-- Q7 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            <span class="zh">如果內網已經有軟路由（如 OpenWrt / pfSense / iStoreOS）可以簽發憑證，為什麼還需要 AnyCert？</span>
+            <span class="en">If I already have a Soft Router (e.g. OpenWrt, pfSense, OPNSense) that issues certificates, why use AnyCert?</span>
+            <span class="faq-icon">▾</span>
+          </div>
+          <div class="faq-answer">
+            <span class="zh">
+              <b>兩者的適用情境與自動化維度完全不同！</b> 軟路由內建的 ACME 套件僅解決「公網 Domain 的憑證簽發」，而 AnyCert 提供了完整的<b>「離線零 Domain 簽發 + Nginx 自動反代 + 全平台客戶端一鍵自動信任」</b>端到端解決方案：<br><br>
+              <ul style="margin: 6px 0 0 20px; padding: 0;">
+                <li><b>100% 離線 & 零 Domain 依賴：</b> 軟路由 ACME 必須申請公網網域名稱 (Domain) 並設定 Cloudflare 等外網 DNS API 驗證；AnyCert 可在無網際網路的純內網、IP (如 <code>192.168.x.x</code>) 或 Tailscale 虛擬網段直接簽發。</li>
+                <li><b>跨平台客戶端一鍵自動信任：</b> 軟路由完全無法幫客戶端電腦自動匯入憑證；AnyCert 提供 <code>anycert-windows.bat</code> / <code>anycert-linux.sh</code> / <code>anycert-macos.sh</code> 一鍵腳本，自動遠端下載 CA、自動導入系統與 Chrome 信任庫並配置 hosts。</li>
+                <li><b>零網路拓撲變更：</b> 無需購買或更換軟路由硬體，在任何既有主機（Windows / Linux / macOS / PVE）上執行即可即刻生效！</li>
+              </ul>
+            </span>
+            <span class="en">
+              <b>Their target scenarios and automation scope are completely different!</b> Router ACME tools usually only cover certificate generation for public domains, whereas AnyCert provides a complete end-to-end solution: <b>100% Offline & Domain-free Issuance + Automated Nginx Proxy + One-click Cross-Platform Client Trust Automation</b>:<br><br>
+              <ul style="margin: 6px 0 0 20px; padding: 0;">
+                <li><b>100% Offline & Zero Domain Dependencies:</b> Router ACME requires a registered public domain name and external DNS API credentials (e.g. Cloudflare). AnyCert works offline in isolated LANs, raw IPs (e.g. <code>192.168.x.x</code>), or Tailscale VPN networks.</li>
+                <li><b>One-Click Automated Client Trust:</b> Soft Routers cannot automate client-side trust installation. AnyCert provides one-click client scripts (<code>anycert-windows.bat</code>, <code>anycert-linux.sh</code>, <code>anycert-macos.sh</code>) that automatically fetch the CA, install it into system & Chrome trust stores, and update local hosts.</li>
+                <li><b>Zero Network Topology Changes:</b> No need to buy or configure soft router hardware—simply run AnyCert on any existing host (Windows, Linux, macOS, or Proxmox VE).</li>
+              </ul>
+            </span>
+          </div>
+        </div>
+
+        <!-- Q8 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            <span class="zh">行動裝置（iOS / Android 手機和平板）可以使用嗎？該如何匯入憑證？</span>
+            <span class="en">Can I use AnyCert on mobile devices (iOS / Android)? How do I install the certificate?</span>
+            <span class="faq-icon">▾</span>
+          </div>
+          <div class="faq-answer">
+            <span class="zh">
+              <b>完全可以！行動裝置只需下載並導入 <code>anycert-ca.crt</code> 即可亮起安全鎖頭 🔒！</b><br><br>
+              💡 <b>手機連線關鍵說明（IP 網址 vs FQDN 域名）：</b>
+              <ul style="margin: 4px 0 10px 20px; padding: 0;">
+                <li><b>預設推薦使用 IP 網址存取 (<code>https://&lt;SERVER_IP&gt;:xxxx</code>)：</b> 由於手機無 Root 權限無法修訂本機 <code>hosts</code> 檔，AnyCert 簽發時已將伺服器實體 IP 與 Tailscale IP 寫入憑證 SAN 欄位中，因此<b>無需修改 hosts，手機直接打 IP 網址即可安全連線！</b></li>
+                <li><b>若欲在手機使用 FQDN 域名 (<code>https://&lt;FQDN&gt;:xxxx</code>)：</b> 需在內網路由器或 DNS 伺服器（如 AdGuard Home、Pi-hole、OpenWrt）自訂 Local DNS A 紀錄指到伺服器 IP。</li>
+              </ul>
+              <b>📱 iOS / iPadOS 安裝步驟：</b>
+              <ol style="margin: 4px 0 10px 20px; padding: 0;">
+                <li>用 Safari 開啟 <code>http://&lt;SERVER_IP&gt;/</code>（AnyCert 預設 Web 首頁），點擊下載 <code>anycert-ca.crt</code>。</li>
+                <li>前往 iOS <b>「設定」&rarr;「已下載描述檔」&rarr; 點擊「安裝」</b>。</li>
+                <li><b>關鍵步驟：</b> 前往 iOS <b>「設定」&rarr;「一般」&rarr;「關於本機」&rarr; 底部「憑證信任設定」&rarr; 開啟 AnyCert Root CA 的「完全信任」</b>開關。</li>
+              </ol>
+              <b>🤖 Android 安裝步驟：</b>
+              <ol style="margin: 4px 0 0 20px; padding: 0;">
+                <li>用 Chrome 開啟 <code>http://&lt;SERVER_IP&gt;/</code> 下載 <code>anycert-ca.crt</code>。</li>
+                <li>前往 Android <b>「設定」&rarr;「安全性與隱私權」&rarr;「更多安全性設定」&rarr;「加密與憑證」&rarr;「安裝憑證」&rarr; 選擇「CA 憑證」</b>。</li>
+                <li>點擊「仍要安裝」並選取剛下載的 <code>anycert-ca.crt</code> 檔案完成匯入。</li>
+              </ol>
+            </span>
+            <span class="en">
+              <b>Yes, absolutely! Mobile devices can fully trust AnyCert by installing <code>anycert-ca.crt</code> 🔒!</b><br><br>
+              💡 <b>Important Note on Mobile Connectivity (IP vs. FQDN):</b>
+              <ul style="margin: 4px 0 10px 20px; padding: 0;">
+                <li><b>Recommended: Connect via IP (<code>https://&lt;SERVER_IP&gt;:xxxx</code>):</b> Non-rooted mobile devices cannot edit local <code>hosts</code> files. AnyCert includes server IPs in the certificate's SAN fields, so <b>direct IP connections work securely without editing hosts!</b></li>
+                <li><b>To use FQDN domain names on mobile (<code>https://&lt;FQDN&gt;:xxxx</code>):</b> You must configure a Local DNS A Record pointing to the server IP on your router or local DNS server (e.g. AdGuard Home, Pi-hole, OpenWrt).</li>
+              </ul>
+              <b>📱 iOS / iPadOS Setup:</b>
+              <ol style="margin: 4px 0 10px 20px; padding: 0;">
+                <li>Open <code>http://&lt;SERVER_IP&gt;/</code> (AnyCert landing page) in Safari and tap <b>Download Root CA</b>.</li>
+                <li>Go to iOS <b>Settings &rarr; Profile Downloaded &rarr; Install</b>.</li>
+                <li><b>Crucial Step:</b> Go to <b>Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings &rarr; Toggle Full Trust ON</b> for AnyCert Root CA.</li>
+              </ol>
+              <b>🤖 Android Setup:</b>
+              <ol style="margin: 4px 0 0 20px; padding: 0;">
+                <li>Open <code>http://&lt;SERVER_IP&gt;/</code> in Chrome and download <code>anycert-ca.crt</code>.</li>
+                <li>Go to Android <b>Settings &rarr; Security & Privacy &rarr; More Security Settings &rarr; Encryption & Credentials &rarr; Install a Certificate &rarr; CA Certificate</b>.</li>
+                <li>Tap "Install Anyway" and select the downloaded <code>anycert-ca.crt</code> file.</li>
+              </ol>
+            </span>
           </div>
         </div>
       </div>

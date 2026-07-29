@@ -500,6 +500,41 @@ WSL 2 supports sharing the Windows host IP directly, making WSL services listen 
 **Q: Can I set up local certificate trust on a single computer?**  
 **A:** Yes. First run the server script (`anycert.bat` or `anycert.sh`) and specify `127.0.0.1` as the server IP. On Windows, the installer will ask if you want to import the CA into the local trust store (selecting yes skips the need to run the client script). On Linux, macOS, or WSL, simply run the corresponding client script once on the same computer.
 
+**Q: Can I achieve 1:1 port forwarding (like Profile 2) on a single host with dual NICs or IP Aliases? What are the key pitfalls?**  
+**A:** **Yes! This is known as Single-Host Fusion Mode.** By binding a secondary IP address (IP Alias / Secondary IP) to your host's network card, you can achieve 1:1 port HTTPS reverse proxying on a single machine without deploying extra VMs or LXC containers:
+
+- **🔹 Architecture & Workflow**:
+  1. **Network Setup**: Assign primary **`IP-A`** (e.g. `192.168.1.100`) and add a secondary virtual **`IP-B`** (e.g. `192.168.1.200`) to the network interface.
+  2. **Service Listening**: Configure backend web services to bind strictly on `IP-A:port` (or `127.0.0.1:port`), while Nginx SSL listens on `IP-B:port`.
+  3. **Traffic Routing**: Requests to `https://IP-B:3000` 🔒 &rarr; decrypted by Nginx &rarr; forwarded to `http://127.0.0.1:3000` 🔓 with zero port conflicts.
+
+- **🚨 Critical Pitfalls to Avoid**:
+  1. **`0.0.0.0` Binding Collision (EADDRINUSE)**: Many backend applications and Docker containers default to listening on `0.0.0.0:PORT` (all interfaces). If a backend service claims `0.0.0.0:3000`, Nginx will fail to start on `IP-B:3000` due to port collision. **Solution**: You must update the backend config or Docker port mapping to bind explicitly to `127.0.0.1` or `IP-A`.
+  2. **IP Allocation & Cloud Restrictions**: On LANs, ensure `IP-B` is reserved/static on your router. On cloud providers (AWS/GCP/Azure), assign a Secondary Private IP via the cloud management console.
+  3. **Reboot Persistence**: Secondary IPs added via temporary CLI tools (e.g. Linux `ip addr add` or Windows `netsh`) will disappear upon reboot. Save them to system network configs (e.g. netplan, systemd-networkd, or Windows Registry) to survive reboots.
+
+**Q: If I already have a Soft Router (e.g. OpenWrt, pfSense, OPNSense) that issues certificates, why do I need AnyCert?**  
+**A:** **Their target scenarios and automation scope are completely different!** Router ACME tools usually only cover certificate generation for public domains, whereas AnyCert provides a complete end-to-end solution: **100% Offline & Domain-free Issuance + Automated Nginx Proxy + One-click Cross-Platform Client Trust Automation**:
+
+- **100% Offline & Zero Domain Dependencies**: Router ACME requires a registered public domain name and external DNS API credentials (e.g. Cloudflare). AnyCert works offline in isolated LANs, raw IPs (e.g. `192.168.x.x`), or Tailscale VPN networks.
+- **One-Click Automated Client Trust**: Soft Routers cannot automate client-side trust installation. AnyCert provides one-click client scripts (`anycert-windows.bat`, `anycert-linux.sh`, `anycert-macos.sh`) that automatically fetch the CA, install it into system & Chrome trust stores, and update local hosts.
+- **Zero Network Topology Changes**: No need to buy or configure soft router hardware—simply run AnyCert on any existing host (Windows, Linux, macOS, or Proxmox VE).
+
+**Q: Can I use AnyCert on mobile devices (iOS / Android)? How do I install the certificate?**  
+**A:** **Yes, absolutely!** Mobile devices can fully trust AnyCert by installing `anycert-ca.crt` 🔒!
+
+- 💡 **Important Note on Mobile Connectivity (IP vs. FQDN)**:
+  - **Recommended: Connect via IP (`https://<SERVER_IP>:xxxx`)**: Non-rooted mobile devices cannot edit local `hosts` files. AnyCert includes server IPs in the certificate's SAN fields, so **direct IP connections work securely without editing hosts!**
+  - **To use FQDN domain names on mobile (`https://<FQDN>:xxxx`)**: You must configure a Local DNS A Record pointing to the server IP on your router or local DNS server (e.g. AdGuard Home, Pi-hole, OpenWrt).
+- **📱 iOS / iPadOS Setup**:
+  1. Open `http://<SERVER_IP>/` in Safari and tap **Download Root CA**.
+  2. Go to iOS **Settings &rarr; Profile Downloaded &rarr; Install**.
+  3. **Crucial Step**: Go to **Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings &rarr; Toggle Full Trust ON** for AnyCert Root CA.
+- **🤖 Android Setup**:
+  1. Open `http://<SERVER_IP>/` in Chrome and download `anycert-ca.crt`.
+  2. Go to Android **Settings &rarr; Security & Privacy &rarr; More Security Settings &rarr; Encryption & Credentials &rarr; Install a Certificate &rarr; CA Certificate**.
+  3. Tap "Install Anyway" and select the downloaded `anycert-ca.crt` file.
+
 ---
 
 ## Uninstall
