@@ -2921,6 +2921,31 @@
             </span>
           </div>
         </div>
+
+        <!-- Q9 -->
+        <div class="faq-item">
+          <div class="faq-question" onclick="toggleFaq(this)">
+            <span class="zh">一台用戶端可以同時信任多台 AnyCert 伺服器嗎？</span>
+            <span class="en">Can a single client machine trust multiple AnyCert servers?</span>
+            <span class="faq-icon">▾</span>
+          </div>
+          <div class="faq-answer">
+            <span class="zh">
+              <b>完全可以！</b> 每台 AnyCert 伺服器各自擁有獨立的 Root CA，用戶端腳本完整支援多台伺服器並存。<br><br>
+              只需針對每台伺服器分別執行一次用戶端腳本：<br>
+              &bull; <code>anycert-windows.bat -s 192.168.1.10</code><br>
+              &bull; <code>anycert-windows.bat -s 192.168.1.20</code><br><br>
+              每台伺服器的 CA 憑證會被獨立匯入並記錄於本地清單（<code>%ProgramData%\anycert\anycert-info.txt</code>）。下次不帶 <code>-s</code> 直接執行時，腳本會列出所有已登記的伺服器，讓您選擇「新增 / 移除 / 離開」。
+            </span>
+            <span class="en">
+              <b>Absolutely!</b> Each AnyCert server has its own independent Root CA, and the client scripts fully support multiple servers coexisting on the same machine.<br><br>
+              Simply run the client script once per server:<br>
+              &bull; <code>anycert-windows.bat -s 192.168.1.10</code><br>
+              &bull; <code>anycert-windows.bat -s 192.168.1.20</code><br><br>
+              Each server's CA cert is imported separately and tracked in a local registry file (<code>%ProgramData%\anycert\anycert-info.txt</code>). When you run the client script again without <code>-s</code>, it lists all registered servers and lets you choose to Add, Remove, or Exit.
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
