@@ -1394,9 +1394,44 @@ set ASSIGNED_SSL_PORTS=
 call :show_nginx_summary
 echo.
 )
+if "!PROFILE!"=="pve" (
+echo   [ Proxmox VE Web Console ]
+echo     - !GREEN!https://!SERVER_FQDN!:8006!RESET!  (via FQDN)
+echo     - !GREEN!https://!SERVER_IP!:8006!RESET!    (via IP)
+echo.
+)
 echo   --------------------------------------------
 echo   [ Client Device Setup Steps ]
 echo.
+if "!PROFILE!"=="nginx_proxy" goto show_option_a_nginx
+if "!PROFILE!"=="nginx_gateway" goto show_option_a_nginx
+
+:: Non-Nginx Profiles (pve, custom, generate_only)
+echo   Option A: Automatic Client Script (CLI / Remote) !GREEN![Recommended ⭐]!RESET!
+echo.
+echo     Execute the client script directly on the client machine:
+echo        - Windows: !CYAN!anycert-windows.bat -s !SERVER_IP!!RESET!  (as Administrator)
+echo        - Linux:   !CYAN!sudo bash anycert-linux.sh -s !SERVER_IP!!RESET!
+echo        - macOS:   !CYAN!sudo bash anycert-macos.sh -s !SERVER_IP!!RESET!
+echo        (Zero prompt: automatically fetches CA and configures system trust ^& hosts)
+echo.
+echo   Option B: Manual Setup
+echo.
+echo     1. Download Root CA via SCP:
+echo        SCP:  scp -o StrictHostKeyChecking=no Administrator@!SERVER_IP!:!CA_CRT:\=/! ./anycert-ca.crt
+echo.
+echo     2. Add the following entry to client's hosts file:
+echo        !GREEN!!SERVER_IP!    !SERVER_FQDN!!RESET!
+echo.
+echo     3. Access your HTTPS services using FQDN or IP:
+if "!PROFILE!"=="pve" (
+echo        !GREEN!https://!SERVER_FQDN!:8006!RESET!  or  !GREEN!https://!SERVER_IP!:8006!RESET!
+) else (
+echo        !GREEN!https://!SERVER_FQDN!:^<port^>!RESET!  or  !GREEN!https://!SERVER_IP!:^<port^>!RESET!
+)
+goto show_summary_done
+
+:show_option_a_nginx
 echo   Option A: Web Browser One-Click Setup !GREEN![Recommended ⭐]!RESET!
 echo.
 echo     1. Open browser on client device and navigate to:
@@ -1423,6 +1458,8 @@ echo        !GREEN!!SERVER_IP!    !SERVER_FQDN!!RESET!
 echo.
 echo     3. Access your HTTPS services using FQDN or IP:
 echo        !GREEN!https://!SERVER_FQDN!:^<port^>!RESET!  or  !GREEN!https://!SERVER_IP!:^<port^>!RESET!
+
+:show_summary_done
 echo.
 echo Installation complete!
 pause

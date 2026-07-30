@@ -332,8 +332,8 @@ if curl -s -f -k -o "$CA_LOCAL" "http://${SERVER_IP}/anycert/anycert-ca.crt"; th
 fi
 
 if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
-    echo "  Port 80 download failed. Probing backup SSL ports via HTTPS..."
-    BACKUP_SSL_PORTS=(13000 18080 21434 16502 16501 8443 443)
+    echo "  Port 80 download failed. Probing standard SSL ports via HTTPS..."
+    BACKUP_SSL_PORTS=(443 8443 8006)
     for P in "${BACKUP_SSL_PORTS[@]}"; do
         if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
             if curl -s -f -k --connect-timeout 2 -o "$CA_LOCAL" "https://${SERVER_IP}:${P}/anycert/anycert-ca.crt" >/dev/null 2>&1; then
@@ -354,7 +354,7 @@ if [[ "$HTTP_DOWNLOAD_OK" != "true" ]]; then
     SSH_USER=${SSH_USER:-root}
 
     while true; do
-        read -rp "  What OS is remote server running? (L) for Linux/WSL/macOS, [W] for Windows Family [L/W]: " INPUT_OS
+        read -rp "  What OS is remote server running? (L) for Linux/WSL/macOS/PVE, [W] for Windows Family [L/W]: " INPUT_OS
         if [[ "$INPUT_OS" =~ ^[Ll]$ ]]; then
             SERVER_OS="n"
             break

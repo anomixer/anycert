@@ -6,7 +6,7 @@ anycert 是一套跨平台憑證工具，適用於私有網路、homelab，以�
 
 它會建立你自己的本機 CA，為 localhost 與內部主機簽發受信任的 HTTPS 憑證，並協助你部署到 Proxmox VE、OpenMediaVault、Unraid、Docker、Nginx 與 Node.js 服務上——全程離線，不需要公開網域。
 
-[English](README.md) | **繁體中文**
+[English](README.md) | **繁體中文** | 🌐 [官方網站 (GitHub Pages)](https://anomixer.github.io/anycert/)
 
 ---
 

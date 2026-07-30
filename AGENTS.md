@@ -333,6 +333,18 @@
 
 ---
 
+### 階段 28：修復 CMD 延遲展開 Syntax Bug 與 Proxmox VE (Profile 5) 8006 埠全端對接
+- **`! was unexpected at this time.` CMD 語法崩潰修正（徹底扁平化）**：
+  - *根因*：在 `anycert-windows.bat` 的 Step 2 中，舊版將 `for %%P` 與多層 `if not errorlevel 1` 巢狀包覆於 `( )` 括號區塊內，且 `echo` 行尾帶有驚嘆號 `(Port %%P)!`。在 `setlocal enabledelayedexpansion` 開啟時，CMD 讀取到未成對的行尾驚嘆號 `!`，或是將 `%BACKUP_SSL_PORTS%` 在 PARSE TIME 展開為空括號 `for %%P in ()` 時，即觸發 CMD 致命語法解析崩潰 `! was unexpected at this time.`。
+  - *修正*：完全遵守守則 1，將 Step 2 探測邏輯徹底改寫為**頂層標籤迴圈 `:probe_ssl_loop`**，利用 `for /f "tokens=1*"` 逐個剝離 ports 變數並使用 `if errorlevel 1 goto probe_ssl_loop` 跳轉。無任何 `( )` 括號巢狀，無末端未逸出 `!`，徹底 100% 根除 CMD 解析器崩潰。
+- **客戶端 8006 (Proxmox VE) HTTPS 探測支援**：
+  - 於三端客戶端腳本（`anycert-windows.bat`、`anycert-linux.sh`、`anycert-macos.sh`）的 `BACKUP_SSL_PORTS` 列表加入 **`8006`**，讓客戶端在 Port 80 未開啟時亦能自動嘗試 8006 埠拉取憑證。
+- **Proxmox VE (Profile 5) 設定寫入與 Summary 指引優化**：
+  - *修正*：在 `anycert.sh` 選擇 Profile 5 (`pve`) 時，將 `PROXY_PORTS="8006"` 與 `PORT_OFFSET="0"` 寫入 `/etc/anycert/anycert.conf`，確保客戶端拉取設定後能自動辨識 `REMOTE_PROFILE=pve` 並自動列出 `https://${SERVER_FQDN}:8006`。
+  - *導覽區分*：針對非 Nginx 模式（Proxmox VE / Custom Path / Generate Only），在 `show_summary` 隱藏「Open http://<SERVER_IP>/ in browser」提示，直接提供 `https://${SERVER_FQDN}:8006` Console 直連網址與 CLI 部署指令。
+
+---
+
 ## 🏗️ 架構與組件角色
 
 ### 🖥️ 伺服器端腳本

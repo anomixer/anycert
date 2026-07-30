@@ -128,8 +128,8 @@ do_uninstall() {
   # Profile-specific cleanup
   if [[ "${PROFILE:-none}" == "pve" ]]; then
     PVE_SSL_DIR="/etc/pve/local"
-    BACKUP_PEM=$(ls -t "${PVE_SSL_DIR}/pveproxy-ssl.pem.bak."* 2>/dev/null | head -1 || true)
-    BACKUP_KEY=$(ls -t "${PVE_SSL_DIR}/pveproxy-ssl.key.bak."* 2>/dev/null | head -1 || true)
+    BACKUP_PEM=$(ls -tr "${PVE_SSL_DIR}/pveproxy-ssl.pem.bak."* 2>/dev/null | head -1 || true)
+    BACKUP_KEY=$(ls -tr "${PVE_SSL_DIR}/pveproxy-ssl.key.bak."* 2>/dev/null | head -1 || true)
 
     if [[ -n "$BACKUP_PEM" ]]; then
       echo -e "${BOLD}[ PVE Backup Detected - Will Restore ]${RESET}"
@@ -140,8 +140,8 @@ do_uninstall() {
     fi
   elif [[ "${PROFILE:-none}" == "custom" ]]; then
     if [[ -n "${CUSTOM_CERT:-}" && -f "${CUSTOM_CERT}" ]]; then
-      BACKUP_CERT=$(ls -t "${CUSTOM_CERT}.bak."* 2>/dev/null | head -1 || true)
-      BACKUP_KEY=$(ls -t "${CUSTOM_KEY}.bak."* 2>/dev/null | head -1 || true)
+      BACKUP_CERT=$(ls -tr "${CUSTOM_CERT}.bak."* 2>/dev/null | head -1 || true)
+      BACKUP_KEY=$(ls -tr "${CUSTOM_KEY}.bak."* 2>/dev/null | head -1 || true)
       if [[ -n "$BACKUP_CERT" ]]; then
         echo -e "${BOLD}[ Custom Path Backup Detected - Will Restore ]${RESET}"
         echo "  $BACKUP_CERT"
@@ -783,10 +783,15 @@ install_cert() {
   if [[ "$PROFILE" == "pve" ]]; then
     info "Installing certificates to Proxmox VE..."
     PVE_SSL_DIR="/etc/pve/local"
-    [[ -f "${PVE_SSL_DIR}/pveproxy-ssl.pem" ]] && \
-      cp "${PVE_SSL_DIR}/pveproxy-ssl.pem" "${PVE_SSL_DIR}/pveproxy-ssl.pem.bak.${TS}"
-    [[ -f "${PVE_SSL_DIR}/pveproxy-ssl.key" ]] && \
-      cp "${PVE_SSL_DIR}/pveproxy-ssl.key" "${PVE_SSL_DIR}/pveproxy-ssl.key.bak.${TS}"
+    if ! ls "${PVE_SSL_DIR}/pveproxy-ssl.pem.bak."* &>/dev/null; then
+      [[ -f "${PVE_SSL_DIR}/pveproxy-ssl.pem" ]] && \
+        cp "${PVE_SSL_DIR}/pveproxy-ssl.pem" "${PVE_SSL_DIR}/pveproxy-ssl.pem.bak.${TS}"
+      [[ -f "${PVE_SSL_DIR}/pveproxy-ssl.key" ]] && \
+        cp "${PVE_SSL_DIR}/pveproxy-ssl.key" "${PVE_SSL_DIR}/pveproxy-ssl.key.bak.${TS}"
+      ok "Original PVE factory certificate backed up to ${PVE_SSL_DIR}/pveproxy-ssl.pem.bak.${TS}"
+    else
+      info "Preserving original PVE factory certificate backup."
+    fi
 
     cp "$SERVER_CRT" "${PVE_SSL_DIR}/pveproxy-ssl.pem"
     cp "$SERVER_KEY" "${PVE_SSL_DIR}/pveproxy-ssl.key"
@@ -1183,9 +1188,14 @@ EOF
     dest_key_dir=$(dirname "$CUSTOM_KEY")
     mkdir -p "$dest_cert_dir" "$dest_key_dir"
 
-    # Backup old certs
-    [[ -f "$CUSTOM_CERT" ]] && cp "$CUSTOM_CERT" "${CUSTOM_CERT}.bak.${TS}"
-    [[ -f "$CUSTOM_KEY" ]] && cp "$CUSTOM_KEY" "${CUSTOM_KEY}.bak.${TS}"
+    # Backup old certs (only if no previous backup exists)
+    if ! ls "${CUSTOM_CERT}.bak."* &>/dev/null; then
+      [[ -f "$CUSTOM_CERT" ]] && cp "$CUSTOM_CERT" "${CUSTOM_CERT}.bak.${TS}"
+      [[ -f "$CUSTOM_KEY" ]] && cp "$CUSTOM_KEY" "${CUSTOM_KEY}.bak.${TS}"
+      ok "Original custom certificate backed up to ${CUSTOM_CERT}.bak.${TS}"
+    else
+      info "Preserving original custom certificate backup."
+    fi
 
     cp "$SERVER_CRT" "$CUSTOM_CERT"
     cp "$SERVER_KEY" "$CUSTOM_KEY"
@@ -1236,6 +1246,11 @@ EOF
 CUSTOM_CERT="${CUSTOM_CERT}"
 CUSTOM_KEY="${CUSTOM_KEY}"
 RELOAD_CMD="${RELOAD_CMD}"
+EOF
+  elif [[ "$PROFILE" == "pve" ]]; then
+    cat >> "$CONF_FILE" <<EOF
+PROXY_PORTS="8006"
+PORT_OFFSET="0"
 EOF
   elif [[ "$PROFILE" == "nginx_proxy" || "$PROFILE" == "nginx_gateway" ]]; then
     cat >> "$CONF_FILE" <<EOF
@@ -1331,38 +1346,62 @@ show_summary() {
       SSL_P=$(resolve_ssl_port "$P")
       echo -e "  - ${GREEN}https://${SERVER_FQDN}:${SSL_P}${RESET}  ->  http://${BIP}:${P}"
     done
+  elif [[ "$PROFILE" == "pve" ]]; then
+    echo ""
+    echo -e "${BOLD}[ Proxmox VE Web Console ]${RESET}"
+    echo -e "  - ${GREEN}https://${SERVER_FQDN}:8006${RESET}  (via FQDN)"
+    echo -e "  - ${GREEN}https://${SERVER_IP}:8006${RESET}    (via IP)"
   fi
 
   echo ""
   echo -e "${BOLD}--------------------------------------------${RESET}"
   echo -e "${BOLD}[ Client Device Setup Steps ]${RESET}"
   echo ""
-  echo -e "${BOLD}Option A: Web Browser One-Click Setup ${GREEN}[Recommended ⭐]${RESET}"
-  echo ""
-  echo -e "  1. Open browser on client device and navigate to:"
-  echo -e "     ${GREEN}http://${SERVER_IP}/${RESET}"
-  echo ""
-  echo -e "  2. Download the client installer script directly from the landing page and follow Option B."
-  echo ""
-  echo -e "${BOLD}Option B: Automatic Client Script (CLI / Remote)${RESET}"
-  echo ""
-  echo -e "  Execute the client script directly on the client machine:"
-  echo -e "     - Windows: ${CYAN}anycert-windows.bat -s ${SERVER_IP}${RESET}  (as Administrator)"
-  echo -e "     - Linux:   ${CYAN}sudo bash anycert-linux.sh -s ${SERVER_IP}${RESET}"
-  echo -e "     - macOS:   ${CYAN}sudo bash anycert-macos.sh -s ${SERVER_IP}${RESET}"
-  echo -e "     (Zero prompt: automatically fetches CA and configures system trust & hosts)"
-  echo ""
-  echo -e "${BOLD}Option C: Manual Setup${RESET}"
-  echo ""
-  echo -e "  1. Download Root CA via HTTP or SCP:"
-  echo -e "     HTTP: ${GREEN}curl -s -L -o anycert-ca.crt http://${SERVER_IP}/anycert/anycert-ca.crt${RESET}"
-  echo -e "     SCP:  ${YELLOW}scp -o StrictHostKeyChecking=no root@${SERVER_IP}:${CA_CRT} ./anycert-ca.crt${RESET}"
+  if [[ "$PROFILE" == "nginx_proxy" || "$PROFILE" == "nginx_gateway" ]]; then
+    echo -e "${BOLD}Option A: Web Browser One-Click Setup ${GREEN}[Recommended ⭐]${RESET}"
+    echo ""
+    echo -e "  1. Open browser on client device and navigate to:"
+    echo -e "     ${GREEN}http://${SERVER_IP}/${RESET}"
+    echo ""
+    echo -e "  2. Download the client installer script directly from the landing page and follow Option B."
+    echo ""
+    echo -e "${BOLD}Option B: Automatic Client Script (CLI / Remote)${RESET}"
+    echo ""
+    echo -e "  Execute the client script directly on the client machine:"
+    echo -e "     - Windows: ${CYAN}anycert-windows.bat -s ${SERVER_IP}${RESET}  (as Administrator)"
+    echo -e "     - Linux:   ${CYAN}sudo bash anycert-linux.sh -s ${SERVER_IP}${RESET}"
+    echo -e "     - macOS:   ${CYAN}sudo bash anycert-macos.sh -s ${SERVER_IP}${RESET}"
+    echo -e "     (Zero prompt: automatically fetches CA and configures system trust & hosts)"
+    echo ""
+    echo -e "${BOLD}Option C: Manual Setup${RESET}"
+    echo ""
+    echo -e "  1. Download Root CA via HTTP or SCP:"
+    echo -e "     HTTP: ${GREEN}curl -s -L -o anycert-ca.crt http://${SERVER_IP}/anycert/anycert-ca.crt${RESET}"
+    echo -e "     SCP:  ${YELLOW}scp -o StrictHostKeyChecking=no root@${SERVER_IP}:${CA_CRT} ./anycert-ca.crt${RESET}"
+  else
+    echo -e "${BOLD}Option A: Automatic Client Script (CLI / Remote) ${GREEN}[Recommended ⭐]${RESET}"
+    echo ""
+    echo -e "  Execute the client script directly on the client machine:"
+    echo -e "     - Windows: ${CYAN}anycert-windows.bat -s ${SERVER_IP}${RESET}  (as Administrator)"
+    echo -e "     - Linux:   ${CYAN}sudo bash anycert-linux.sh -s ${SERVER_IP}${RESET}"
+    echo -e "     - macOS:   ${CYAN}sudo bash anycert-macos.sh -s ${SERVER_IP}${RESET}"
+    echo -e "     (Zero prompt: automatically fetches CA and configures system trust & hosts)"
+    echo ""
+    echo -e "${BOLD}Option B: Manual Setup${RESET}"
+    echo ""
+    echo -e "  1. Download Root CA via SCP:"
+    echo -e "     SCP:  ${YELLOW}scp -o StrictHostKeyChecking=no root@${SERVER_IP}:${CA_CRT} ./anycert-ca.crt${RESET}"
+  fi
   echo ""
   echo -e "  2. Add the following entry to client's hosts file:"
   echo -e "     ${YELLOW}${SERVER_IP}  ${SERVER_FQDN}${RESET}"
   echo ""
   echo -e "  3. Access your HTTPS services using FQDN or IP:"
-  echo -e "     ${GREEN}https://${SERVER_FQDN}:<port>${RESET}  or  ${GREEN}https://${SERVER_IP}:<port>${RESET}"
+  if [[ "$PROFILE" == "pve" ]]; then
+    echo -e "     ${GREEN}https://${SERVER_FQDN}:8006${RESET}  or  ${GREEN}https://${SERVER_IP}:8006${RESET}"
+  else
+    echo -e "     ${GREEN}https://${SERVER_FQDN}:<port>${RESET}  or  ${GREEN}https://${SERVER_IP}:<port>${RESET}"
+  fi
   if [[ "$IS_WSL" == "true" ]]; then
     local host_ip="0.0.0.0"
     local primary_ip

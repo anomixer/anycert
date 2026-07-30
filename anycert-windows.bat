@@ -247,33 +247,37 @@ set CA_LOCAL=!DATA_DIR!\anycert-ca-!SERVER_IP!.crt
 :: Priority 1: HTTP/HTTPS Curl Download (Zero-Password)
 set "HTTP_DOWNLOAD_OK=0"
 echo   Probing HTTP server (Port 80) for certificate download...
-curl.exe -s -f -k -o "!CA_LOCAL!" "http://!SERVER_IP!/anycert/anycert-ca.crt"
-if !errorlevel! equ 0 (
-    curl.exe -s -f -k -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "http://!SERVER_IP!/anycert/anycert.conf"
+curl.exe -s -f -k -o "!CA_LOCAL!" "http://!SERVER_IP!/anycert/anycert-ca.crt" >nul 2>&1
+if not errorlevel 1 (
+    curl.exe -s -f -k -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "http://!SERVER_IP!/anycert/anycert.conf" >nul 2>&1
     if not errorlevel 1 (
-        echo   !GREEN![OK]!RESET! CA certificate and config successfully downloaded via HTTP!
+        echo   [OK] CA certificate and config successfully downloaded via HTTP
         set "HTTP_DOWNLOAD_OK=1"
         goto scp_ok
     )
 )
 
-:: Try backup SSL ports via HTTPS (curl -k)
-echo   Port 80 download failed. Probing backup SSL ports via HTTPS...
-set "BACKUP_SSL_PORTS=13000 18080 21434 16502 16501 8443 443"
-for %%P in (!BACKUP_SSL_PORTS!) do (
-    if "!HTTP_DOWNLOAD_OK!"=="0" (
-        curl.exe -s -f -k --connect-timeout 2 -o "!CA_LOCAL!" "https://!SERVER_IP!:%%P/anycert/anycert-ca.crt" >nul 2>&1
-        if !errorlevel! equ 0 (
-            curl.exe -s -f -k --connect-timeout 2 -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "https://!SERVER_IP!:%%P/anycert/anycert.conf" >nul 2>&1
-            if not errorlevel 1 (
-                echo   !GREEN![OK]!RESET! CA certificate and config successfully downloaded via HTTPS (Port %%P)!
-                set "HTTP_DOWNLOAD_OK=1"
-            )
-        )
-    )
+echo   Port 80 download failed. Probing standard SSL ports via HTTPS...
+set "SSL_PORTS_REMAINING=443 8443 8006"
+
+:probe_ssl_loop
+if "!SSL_PORTS_REMAINING!"=="" goto after_probe_ssl
+for /f "tokens=1*" %%A in ("!SSL_PORTS_REMAINING!") do (
+    set "CUR_P=%%A"
+    set "SSL_PORTS_REMAINING=%%B"
 )
 
-if "!HTTP_DOWNLOAD_OK!"=="1" goto scp_ok
+curl.exe -s -f -k --connect-timeout 2 -o "!CA_LOCAL!" "https://!SERVER_IP!:!CUR_P!/anycert/anycert-ca.crt" >nul 2>&1
+if errorlevel 1 goto probe_ssl_loop
+
+curl.exe -s -f -k --connect-timeout 2 -o "!DATA_DIR!\anycert-conf-!SERVER_IP!.tmp" "https://!SERVER_IP!:!CUR_P!/anycert/anycert.conf" >nul 2>&1
+if errorlevel 1 goto probe_ssl_loop
+
+echo   [OK] CA certificate and config successfully downloaded via HTTPS (Port !CUR_P!)
+set "HTTP_DOWNLOAD_OK=1"
+goto scp_ok
+
+:after_probe_ssl
 
 echo   [INFO] Zero-password HTTP/HTTPS download failed. Falling back to SSH/SCP...
 echo.
@@ -284,7 +288,7 @@ if "!SSH_USER!"=="" set SSH_USER=root
 
 :ask_os_loop
 set "INPUT_OS="
-set /p INPUT_OS=  What OS is remote server running? (L) for Linux/WSL/macOS, [W] for Windows Family [L/W]: 
+set /p INPUT_OS=  What OS is remote server running? (L) for Linux/WSL/macOS/PVE, [W] for Windows Family [L/W]: 
 if /i "!INPUT_OS!"=="l" (
     set SERVER_OS=n
 ) else if /i "!INPUT_OS!"=="w" (
